@@ -3,6 +3,7 @@ import cors from "cors";
 import sqlite3 from "sqlite3";
 import { open } from "sqlite";
 
+const { Database } = sqlite3.verbose();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
