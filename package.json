@@ -4,8 +4,8 @@
   "type": "module",
   "description": "Backend para sistema de control de asistencia QR",
   "scripts": {
-    "start": "node backend/index.js",
-    "dev": "nodemon backend/index.js",
+    "start": "node index.js",
+    "dev": "nodemon index.js",
     "setup": "npm install"
   },
   "dependencies": {
