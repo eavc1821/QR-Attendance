@@ -18,12 +18,29 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 // Configuración CORS mejorada
+// Configuración CORS mejorada - REEMPLAZA ESTA SECCIÓN
 app.use(cors({
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000'],
+    origin: '*', // Temporalmente permitir todos los orígenes
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
+
+// O si prefieres mantener los orígenes específicos, agrega el puerto del frontend:
+app.use(cors({
+    origin: [
+        'http://localhost:5173', 
+        'http://127.0.0.1:5173',
+        'http://localhost:3000',
+        'http://localhost:5174' // Agregar este por si acaso
+    ],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
+
+// Manejar preflight requests
+app.options('*', cors());
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -67,51 +84,213 @@ app.post('/api/login', async (req, res) => {
     try {
         const { username, password } = req.body;
 
+        console.log('🔐 Intento de login para usuario:', username);
+
         if (!username || !password) {
             return res.status(400).json({ error: 'Usuario y contraseña son requeridos' });
         }
 
-        db.get('SELECT * FROM users WHERE username = ?', [username], async (err, user) => {
-            if (err) {
-                console.error('Error en login:', err);
-                return res.status(500).json({ error: 'Error del servidor' });
-            }
-
-            if (!user) {
-                return res.status(401).json({ error: 'Credenciales inválidas' });
-            }
-
-            const isValidPassword = await bcrypt.compare(password, user.password);
-            if (!isValidPassword) {
-                return res.status(401).json({ error: 'Credenciales inválidas' });
-            }
-
-            const token = jwt.sign(
-                { 
-                    id: user.id, 
-                    username: user.username, 
-                    role: user.role 
-                },
-                JWT_SECRET,
-                { expiresIn: '8h' }
-            );
-
-            res.json({
-                success: true,
-                token,
-                user: {
-                    id: user.id,
-                    username: user.username,
-                    role: user.role,
-                    name: user.name
+        // Convertir la consulta de la base de datos a promesa
+        const user = await new Promise((resolve, reject) => {
+            db.get('SELECT * FROM users WHERE username = ?', [username], (err, row) => {
+                if (err) {
+                    console.error('❌ Error en consulta de base de datos:', err);
+                    reject(err);
+                } else {
+                    resolve(row);
                 }
             });
         });
+
+        console.log('👤 Usuario encontrado en BD:', user ? 'Sí' : 'No');
+
+        if (!user) {
+            return res.status(401).json({ error: 'Credenciales inválidas' });
+        }
+
+        // Verificar contraseña
+        const isValidPassword = await bcrypt.compare(password, user.password);
+        console.log('🔑 Contraseña válida:', isValidPassword);
+
+        if (!isValidPassword) {
+            return res.status(401).json({ error: 'Credenciales inválidas' });
+        }
+
+        // Generar token
+        const token = jwt.sign(
+            { 
+                id: user.id, 
+                username: user.username, 
+                role: user.role 
+            },
+            JWT_SECRET,
+            { expiresIn: '8h' }
+        );
+
+        console.log('✅ Login exitoso para:', user.username);
+
+        res.json({
+            success: true,
+            token,
+            user: {
+                id: user.id,
+                username: user.username,
+                role: user.role,
+                name: user.name
+            }
+        });
+
     } catch (error) {
-        console.error('Error en login:', error);
+        console.error('❌ Error general en login:', error);
         res.status(500).json({ error: 'Error interno del servidor' });
     }
 });
+
+// Routes de gestión de usuarios - SOLO SUPERADMIN
+app.get('/api/users', authenticateToken, (req, res) => {
+    // Verificar que sea superadmin
+    if (req.user.role !== 'superadmin') {
+        return res.status(403).json({ error: 'Se requieren privilegios de superadministrador' });
+    }
+
+    const query = 'SELECT id, username, role, name, created_at FROM users ORDER BY created_at DESC';
+    
+    db.all(query, (err, rows) => {
+        if (err) {
+            console.error('Error al obtener usuarios:', err);
+            return res.status(500).json({ error: 'Error al obtener usuarios' });
+        }
+        res.json(rows || []);
+    });
+});
+
+app.post('/api/users', authenticateToken, async (req, res) => {
+    try {
+        // Verificar que sea superadmin
+        if (req.user.role !== 'superadmin') {
+            return res.status(403).json({ error: 'Se requieren privilegios de superadministrador' });
+        }
+
+        const { username, password, role, name } = req.body;
+
+        if (!username || !password || !role || !name) {
+            return res.status(400).json({ error: 'Todos los campos son requeridos' });
+        }
+
+        // Validar roles permitidos
+        if (!['superadmin', 'scanner'].includes(role)) {
+            return res.status(400).json({ error: 'Rol no válido' });
+        }
+
+        // Hash de la contraseña
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        db.run(
+            'INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)',
+            [username, hashedPassword, role, name],
+            function(err) {
+                if (err) {
+                    if (err.message.includes('UNIQUE constraint failed')) {
+                        return res.status(400).json({ error: 'El nombre de usuario ya existe' });
+                    }
+                    console.error('Error al crear usuario:', err);
+                    return res.status(500).json({ error: 'Error al crear usuario' });
+                }
+
+                res.status(201).json({
+                    id: this.lastID,
+                    username,
+                    role,
+                    name,
+                    created_at: new Date().toISOString()
+                });
+            }
+        );
+    } catch (error) {
+        console.error('Error en creación de usuario:', error);
+        res.status(500).json({ error: 'Error del servidor' });
+    }
+});
+
+app.put('/api/users/:id', authenticateToken, async (req, res) => {
+    try {
+        // Verificar que sea superadmin
+        if (req.user.role !== 'superadmin') {
+            return res.status(403).json({ error: 'Se requieren privilegios de superadministrador' });
+        }
+
+        const { id } = req.params;
+        const { username, password, role, name } = req.body;
+
+        if (!username || !role || !name) {
+            return res.status(400).json({ error: 'Usuario, rol y nombre son requeridos' });
+        }
+
+        // Validar roles permitidos
+        if (!['superadmin', 'scanner'].includes(role)) {
+            return res.status(400).json({ error: 'Rol no válido' });
+        }
+
+        let query;
+        let params;
+
+        if (password) {
+            const hashedPassword = await bcrypt.hash(password, 10);
+            query = 'UPDATE users SET username = ?, password = ?, role = ?, name = ? WHERE id = ?';
+            params = [username, hashedPassword, role, name, id];
+        } else {
+            query = 'UPDATE users SET username = ?, role = ?, name = ? WHERE id = ?';
+            params = [username, role, name, id];
+        }
+
+        db.run(query, params, function(err) {
+            if (err) {
+                if (err.message.includes('UNIQUE constraint failed')) {
+                    return res.status(400).json({ error: 'El nombre de usuario ya existe' });
+                }
+                console.error('Error al actualizar usuario:', err);
+                return res.status(500).json({ error: 'Error al actualizar usuario' });
+            }
+
+            if (this.changes === 0) {
+                return res.status(404).json({ error: 'Usuario no encontrado' });
+            }
+
+            res.json({ message: 'Usuario actualizado correctamente' });
+        });
+    } catch (error) {
+        console.error('Error en actualización de usuario:', error);
+        res.status(500).json({ error: 'Error del servidor' });
+    }
+});
+
+app.delete('/api/users/:id', authenticateToken, (req, res) => {
+    // Verificar que sea superadmin
+    if (req.user.role !== 'superadmin') {
+        return res.status(403).json({ error: 'Se requieren privilegios de superadministrador' });
+    }
+
+    const { id } = req.params;
+
+    // No permitir eliminar el propio usuario
+    if (parseInt(id) === req.user.id) {
+        return res.status(400).json({ error: 'No puedes eliminar tu propio usuario' });
+    }
+
+    db.run('DELETE FROM users WHERE id = ?', [id], function(err) {
+        if (err) {
+            console.error('Error al eliminar usuario:', err);
+            return res.status(500).json({ error: 'Error al eliminar usuario' });
+        }
+
+        if (this.changes === 0) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+
+        res.json({ message: 'Usuario eliminado correctamente' });
+    });
+});
+
 
 // Routes de empleados - CORREGIDAS
 app.get('/api/employees', authenticateToken, (req, res) => {
