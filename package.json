@@ -1,11 +1,11 @@
 {
   "name": "asistencia-qr-backend",
   "version": "1.0.0",
+  "type": "module",
   "description": "Backend para sistema de control de asistencia QR",
-  "main": "server.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon server.js",
+    "start": "node backend/index.js",
+    "dev": "nodemon backend/index.js",
     "setup": "npm install"
   },
   "dependencies": {
