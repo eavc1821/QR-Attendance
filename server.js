@@ -17,31 +17,46 @@ if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Configuración CORS mejorada
-// Configuración CORS mejorada - REEMPLAZA ESTA SECCIÓN
+// ==========================
+// 🔒 CONFIGURACIÓN DE CORS
+// ==========================
+const allowedOrigins = [
+  "https://gjd78.com",
+  "https://www.gjd78.com"
+];
+
 app.use(cors({
-    origin: '*', // Temporalmente permitir todos los orígenes
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  origin: function (origin, callback) {
+    // Permitir solicitudes sin origen (como Postman o curl)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS bloqueado: origen no permitido → " + origin));
+    }
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  credentials: true
 }));
 
+
 // O si prefieres mantener los orígenes específicos, agrega el puerto del frontend:
-app.use(cors({
-    origin: [
-        'http://localhost:5173', 
-        'http://127.0.0.1:5173',
-        'http://localhost:3000',
-        'http://localhost:5174' // Agregar este por si acaso
-    ],
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-}));
+// app.use(cors({
+//     origin: [
+//         'http://localhost:5173', 
+//         'http://127.0.0.1:5173',
+//         'http://localhost:3000',
+//         'http://localhost:5174' // Agregar este por si acaso
+//     ],
+//     credentials: true,
+//     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+//     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+// }));
 
 // Manejar preflight requests
 app.options('*', cors());
-
+app.use(express.json());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(uploadsDir));
