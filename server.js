@@ -1082,6 +1082,13 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: "Error interno del servidor" });
 });
 
+const sqlite3 = require("sqlite3").verbose();
+const db = new sqlite3.Database("./database.sqlite");
+db.run("DELETE FROM attendance");
+db.run("DELETE FROM production");
+db.run("DELETE FROM employees");
+
+
 // ==========================
 // 🚀 INICIAR SERVIDOR
 // ==========================
