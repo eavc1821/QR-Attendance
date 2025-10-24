@@ -1073,51 +1073,51 @@ app.get("/api/debug/employees", authenticateToken, (req, res) => {
 // ==========================================================
 // ⚙️ ENDPOINT TEMPORAL DE LIMPIEZA TOTAL (mantiene usuarios)
 // ==========================================================
-app.all("/api/cleanup", (req, res) => {
-  const key = req.query.key;
-  if (key !== "adminSecret123") {
-    return res.status(403).json({ error: "Acceso no autorizado" });
-  }
+// app.all("/api/cleanup", (req, res) => {
+//   const key = req.query.key;
+//   if (key !== "adminSecret123") {
+//     return res.status(403).json({ error: "Acceso no autorizado" });
+//   }
 
-  console.log("🧹 Ejecutando limpieza total de registros...");
+//   console.log("🧹 Ejecutando limpieza total de registros...");
 
-  const tables = ["attendance", "production", "employees"];
-  const deleted = [];
+//   const tables = ["attendance", "production", "employees"];
+//   const deleted = [];
 
-  try {
-    db.serialize(() => {
-      const deleteNext = (i) => {
-        if (i >= tables.length) {
-          console.log("✅ Limpieza completada correctamente.");
-          return res.json({
-            success: true,
-            message: `Se eliminaron correctamente los registros de: ${deleted.join(", ")}`,
-          });
-        }
+//   try {
+//     db.serialize(() => {
+//       const deleteNext = (i) => {
+//         if (i >= tables.length) {
+//           console.log("✅ Limpieza completada correctamente.");
+//           return res.json({
+//             success: true,
+//             message: `Se eliminaron correctamente los registros de: ${deleted.join(", ")}`,
+//           });
+//         }
 
-        const table = tables[i];
-        db.run(`DELETE FROM ${table}`, (err) => {
-          if (err && err.message.includes("no such table")) {
-            console.warn(`⚠️ Tabla ${table} no existe, se omite.`);
-          } else if (err) {
-            console.error(`❌ Error al eliminar ${table}:`, err);
-          } else {
-            console.log(`✅ Registros eliminados de ${table}`);
-            deleted.push(table);
-          }
-          deleteNext(i + 1);
-        });
-      };
+//         const table = tables[i];
+//         db.run(`DELETE FROM ${table}`, (err) => {
+//           if (err && err.message.includes("no such table")) {
+//             console.warn(`⚠️ Tabla ${table} no existe, se omite.`);
+//           } else if (err) {
+//             console.error(`❌ Error al eliminar ${table}:`, err);
+//           } else {
+//             console.log(`✅ Registros eliminados de ${table}`);
+//             deleted.push(table);
+//           }
+//           deleteNext(i + 1);
+//         });
+//       };
 
-      deleteNext(0);
-    });
-  } catch (error) {
-    console.error("❌ Error al limpiar la base:", error);
-    res.status(500).json({ error: "Error al limpiar los registros." });
-  }
-});
+//       deleteNext(0);
+//     });
+//   } catch (error) {
+//     console.error("❌ Error al limpiar la base:", error);
+//     res.status(500).json({ error: "Error al limpiar los registros." });
+//   }
+// });
 
-console.log("🚀 Endpoint /api/cleanup registrado correctamente (limpieza tolerante)");
+// console.log("🚀 Endpoint /api/cleanup registrado correctamente (limpieza tolerante)");
 
 // ==========================
 // ⚠️ MANEJO DE 404 Y ERRORES
