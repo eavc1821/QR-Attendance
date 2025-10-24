@@ -1,7 +1,6 @@
 {
   "name": "asistencia-qr-backend",
   "version": "1.0.0",
-  "type": "module",
   "description": "Backend para sistema de control de asistencia QR",
   "scripts": {
     "start": "node index.js",
