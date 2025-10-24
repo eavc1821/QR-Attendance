@@ -192,6 +192,10 @@ app.post("/api/generate-qr", async (req, res) => {
   }
 });
 
+app.get("/api/test", (req, res) => {
+  res.json({ message: "✅ Ruta /api/test funcionando correctamente" });
+});
+
 // ==========================
 // ⚠️ MANEJO DE 404 Y ERRORES
 // ==========================
