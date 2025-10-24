@@ -1072,7 +1072,6 @@ app.get("/api/debug/employees", authenticateToken, (req, res) => {
 // ⚠️ Endpoint temporal para limpiar datos de asistencia y producción
 app.delete("/api/cleanup", async (req, res) => {
   try {
-    // Si quieres protegerlo con clave: ?key=adminSecret
     const key = req.query.key;
     if (key !== "adminSecret123") {
       return res.status(403).json({ error: "Acceso no autorizado" });
@@ -1083,17 +1082,17 @@ app.delete("/api/cleanup", async (req, res) => {
         if (err) return reject(err);
         db.run("DELETE FROM production", (err2) => {
           if (err2) return reject(err2);
-        db.run("DELETE FROM employees", (err3) => {
-          if (err2) return reject(err3);
-          resolve();
-        });
+          db.run("DELETE FROM employees", (err3) => {
+            if (err3) return reject(err3);
+            resolve();
+          });
         });
       });
     });
 
     res.json({
       success: true,
-      message: "Registros de asistencia y producción eliminados correctamente.",
+      message: "Registros de asistencia, producción y empleados eliminados correctamente.",
     });
   } catch (error) {
     console.error("Error limpiando la base:", error);
