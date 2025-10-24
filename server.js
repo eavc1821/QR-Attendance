@@ -1069,40 +1069,44 @@ app.get("/api/debug/employees", authenticateToken, (req, res) => {
   });
 });
 
-// ⚠️ Endpoint temporal para limpiar datos de asistencia y producción (mantiene usuarios)
+// ==========================================================
+// ⚙️ ENDPOINT TEMPORAL DE LIMPIEZA (mantiene usuarios y empleados)
+// ==========================================================
 app.delete("/api/cleanup", (req, res) => {
   const key = req.query.key;
   if (key !== "adminSecret123") {
     return res.status(403).json({ error: "Acceso no autorizado" });
   }
 
+  console.log("🧹 Ejecutando limpieza de registros...");
+
   try {
     db.serialize(() => {
       db.run("DELETE FROM attendance", (err1) => {
         if (err1) {
-          console.error("Error al eliminar attendance:", err1);
+          console.error("❌ Error al eliminar attendance:", err1);
           return res.status(500).json({ error: "Error al eliminar attendance" });
         }
 
         db.run("DELETE FROM production", (err2) => {
           if (err2) {
-            console.error("Error al eliminar production:", err2);
+            console.error("❌ Error al eliminar production:", err2);
             return res.status(500).json({ error: "Error al eliminar production" });
           }
 
-          // Si quieres conservar empleados, comenta esta parte 👇
-           db.run("DELETE FROM employees", (err3) => {
-             if (err3) {
-               console.error("Error al eliminar employees:", err3);
-               return res.status(500).json({ error: "Error al eliminar employees" });
-             }
+        db.run("DELETE FROM employees", (err2) => {
+          if (err2) {
+            console.error("❌ Error al eliminar empleados:", err2);
+            return res.status(500).json({ error: "Error al eliminar empleados" });
+          }
+          
 
-          console.log("✅ Registros de attendance y production eliminados correctamente.");
+          console.log("✅ Registros de asistencia y producción eliminados correctamente.");
           res.json({
             success: true,
             message: "Registros de asistencia y producción eliminados correctamente.",
           });
-           });
+        });
         });
       });
     });
@@ -1112,7 +1116,7 @@ app.delete("/api/cleanup", (req, res) => {
   }
 });
 
-
+console.log("🚀 Endpoint /api/cleanup registrado correctamente");
 
 // ==========================
 // ⚠️ MANEJO DE 404 Y ERRORES
@@ -1135,3 +1139,4 @@ app.listen(PORT, () => {
   console.log(`🌐 BASE_URL: ${BASE_URL}`);
   console.log(`📊 Health check en /api/health`);
 });
+
