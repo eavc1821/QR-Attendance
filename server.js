@@ -1072,49 +1072,55 @@ app.get("/api/debug/employees", authenticateToken, (req, res) => {
 // ==========================================================
 // ⚙️ ENDPOINT TEMPORAL DE LIMPIEZA (mantiene usuarios y empleados)
 // ==========================================================
+
 app.all("/api/cleanup", (req, res) => {
   const key = req.query.key;
   if (key !== "adminSecret123") {
     return res.status(403).json({ error: "Acceso no autorizado" });
   }
 
-  console.log("🧹 Ejecutando limpieza de registros...");
+  console.log("🧹 Ejecutando limpieza total de registros...");
 
   try {
     db.serialize(() => {
+      // Eliminar asistencia
       db.run("DELETE FROM attendance", (err1) => {
         if (err1) {
           console.error("❌ Error al eliminar attendance:", err1);
           return res.status(500).json({ error: "Error al eliminar attendance" });
         }
 
+        // Eliminar producción
         db.run("DELETE FROM production", (err2) => {
           if (err2) {
             console.error("❌ Error al eliminar production:", err2);
             return res.status(500).json({ error: "Error al eliminar production" });
           }
 
-        db.run("DELETE FROM employees", (err2) => {
-          if (err2) {
-            console.error("❌ Error al eliminar empleados:", err2);
-            return res.status(500).json({ error: "Error al eliminar empleados" });
-          }
-          
+          // Eliminar empleados
+          db.run("DELETE FROM employees", (err3) => {
+            if (err3) {
+              console.error("❌ Error al eliminar employees:", err3);
+              return res.status(500).json({ error: "Error al eliminar employees" });
+            }
 
-          console.log("✅ Registros de asistencia y producción eliminados correctamente.");
-          res.json({
-            success: true,
-            message: "Registros de asistencia y producción eliminados correctamente.",
+            console.log("✅ Limpieza total completada (attendance, production, employees).");
+            res.json({
+              success: true,
+              message: "Se eliminaron correctamente todos los registros de asistencia, producción y empleados.",
+            });
           });
-        });
         });
       });
     });
   } catch (error) {
-    console.error("Error al limpiar la base:", error);
+    console.error("❌ Error al limpiar la base:", error);
     res.status(500).json({ error: "Error al limpiar los registros." });
   }
 });
+
+console.log("🚀 Endpoint /api/cleanup registrado correctamente (limpieza total)");
+
 
 console.log("🚀 Endpoint /api/cleanup registrado correctamente");
 
