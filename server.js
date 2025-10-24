@@ -1069,19 +1069,6 @@ app.get("/api/debug/employees", authenticateToken, (req, res) => {
   });
 });
 
-// ==========================
-// ⚠️ MANEJO DE 404 Y ERRORES
-// ==========================
-app.use("/api/*", (req, res) => {
-  console.log(`Ruta no encontrada: ${req.method} ${req.originalUrl}`);
-  res.status(404).json({ error: "Endpoint no encontrado" });
-});
-
-app.use((error, req, res, next) => {
-  console.error("Error no manejado:", error);
-  res.status(500).json({ error: "Error interno del servidor" });
-});
-
 // ⚠️ Endpoint temporal para limpiar datos de asistencia y producción
 app.delete("/api/cleanup", async (req, res) => {
   try {
@@ -1114,7 +1101,18 @@ app.delete("/api/cleanup", async (req, res) => {
   }
 });
 
+// ==========================
+// ⚠️ MANEJO DE 404 Y ERRORES
+// ==========================
+app.use("/api/*", (req, res) => {
+  console.log(`Ruta no encontrada: ${req.method} ${req.originalUrl}`);
+  res.status(404).json({ error: "Endpoint no encontrado" });
+});
 
+app.use((error, req, res, next) => {
+  console.error("Error no manejado:", error);
+  res.status(500).json({ error: "Error interno del servidor" });
+});
 
 // ==========================
 // 🚀 INICIAR SERVIDOR
