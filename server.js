@@ -961,6 +961,45 @@ app.delete("/api/attendance/cleanup", authenticateToken, (req, res) => {
   });
 });
 
+// ==========================
+// 🧹 LIMPIAR TODOS LOS EMPLEADOS (manteniendo usuarios intactos)
+// ==========================
+app.delete("/api/employees/cleanup", authenticateToken, (req, res) => {
+  if (req.user.role !== "superadmin") {
+    return res.status(403).json({ error: "Solo los superadministradores pueden realizar esta acción" });
+  }
+
+  const { confirmation } = req.body;
+  if (confirmation !== "ELIMINAR_EMPLEADOS") {
+    return res.status(400).json({
+      error: "Se requiere confirmación para eliminar empleados. Usa { confirmation: 'ELIMINAR_EMPLEADOS' }",
+    });
+  }
+
+  // Primero eliminar asistencias (dependientes)
+  db.run("DELETE FROM attendance", [], function (err) {
+    if (err) {
+      console.error("Error al eliminar registros de asistencia:", err);
+      return res.status(500).json({ error: "Error al eliminar registros de asistencia" });
+    }
+
+    // Luego eliminar empleados
+    db.run("DELETE FROM employees", [], function (err2) {
+      if (err2) {
+        console.error("Error al eliminar empleados:", err2);
+        return res.status(500).json({ error: "Error al eliminar empleados" });
+      }
+
+      res.json({
+        success: true,
+        message: `Se eliminaron todos los empleados y ${this.changes} registros de empleados.`,
+        employees_deleted: this.changes,
+      });
+    });
+  });
+});
+
+
 app.get("/api/attendance/stats", authenticateToken, (req, res) => {
   const { start_date, end_date } = req.query;
 
