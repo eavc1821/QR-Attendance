@@ -1082,11 +1082,38 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: "Error interno del servidor" });
 });
 
-const sqlite3 = require("sqlite3").verbose();
-const db = new sqlite3.Database("./database.sqlite");
-db.run("DELETE FROM attendance");
-db.run("DELETE FROM production");
-db.run("DELETE FROM employees");
+// ⚠️ Endpoint temporal para limpiar datos de asistencia y producción
+app.delete("/api/cleanup", async (req, res) => {
+  try {
+    // Si quieres protegerlo con clave: ?key=adminSecret
+    const key = req.query.key;
+    if (key !== "adminSecret123") {
+      return res.status(403).json({ error: "Acceso no autorizado" });
+    }
+
+    await new Promise((resolve, reject) => {
+      db.run("DELETE FROM attendance", (err) => {
+        if (err) return reject(err);
+        db.run("DELETE FROM production", (err2) => {
+          if (err2) return reject(err2);
+        db.run("DELETE FROM employees", (err3) => {
+          if (err2) return reject(err3);
+          resolve();
+        });
+        });
+      });
+    });
+
+    res.json({
+      success: true,
+      message: "Registros de asistencia y producción eliminados correctamente.",
+    });
+  } catch (error) {
+    console.error("Error limpiando la base:", error);
+    res.status(500).json({ error: "Error al limpiar los registros." });
+  }
+});
+
 
 
 // ==========================
