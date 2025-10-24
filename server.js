@@ -1072,7 +1072,7 @@ app.get("/api/debug/employees", authenticateToken, (req, res) => {
 // ==========================================================
 // ⚙️ ENDPOINT TEMPORAL DE LIMPIEZA (mantiene usuarios y empleados)
 // ==========================================================
-app.delete("/api/cleanup", (req, res) => {
+app.all("/api/cleanup", (req, res) => {
   const key = req.query.key;
   if (key !== "adminSecret123") {
     return res.status(403).json({ error: "Acceso no autorizado" });
