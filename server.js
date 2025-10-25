@@ -1073,51 +1073,108 @@ app.get("/api/debug/employees", authenticateToken, (req, res) => {
 // ==========================================================
 // ⚙️ ENDPOINT TEMPORAL DE LIMPIEZA TOTAL (mantiene usuarios)
 // ==========================================================
-// app.all("/api/cleanup", (req, res) => {
+// app.all("/api/resetdb", (req, res) => {
 //   const key = req.query.key;
 //   if (key !== "adminSecret123") {
 //     return res.status(403).json({ error: "Acceso no autorizado" });
 //   }
 
-//   console.log("🧹 Ejecutando limpieza total de registros...");
+//   const dbPath = "./database.sqlite";
 
-//   const tables = ["attendance", "production", "employees"];
-//   const deleted = [];
+//   console.log("⚠️ Reiniciando base de datos completa...");
 
 //   try {
-//     db.serialize(() => {
-//       const deleteNext = (i) => {
-//         if (i >= tables.length) {
-//           console.log("✅ Limpieza completada correctamente.");
-//           return res.json({
-//             success: true,
-//             message: `Se eliminaron correctamente los registros de: ${deleted.join(", ")}`,
-//           });
+//     // Cerrar la conexión actual
+//     db.close((err) => {
+//       if (err) {
+//         console.error("❌ Error al cerrar la conexión:", err);
+//         return res.status(500).json({ error: "No se pudo cerrar la conexión a la base de datos." });
+//       }
+
+//       // Eliminar el archivo físico de la base
+//       if (fs.existsSync(dbPath)) {
+//         fs.unlinkSync(dbPath);
+//         console.log("🗑️ Archivo database.sqlite eliminado.");
+//       } else {
+//         console.log("⚠️ No se encontró archivo database.sqlite, se creará uno nuevo.");
+//       }
+
+//       // Volver a crear la base vacía
+//       const sqlite3 = require("sqlite3").verbose();
+//       global.db = new sqlite3.Database(dbPath, (err2) => {
+//         if (err2) {
+//           console.error("❌ Error al recrear base:", err2);
+//           return res.status(500).json({ error: "Error al crear nueva base de datos." });
 //         }
 
-//         const table = tables[i];
-//         db.run(`DELETE FROM ${table}`, (err) => {
-//           if (err && err.message.includes("no such table")) {
-//             console.warn(`⚠️ Tabla ${table} no existe, se omite.`);
-//           } else if (err) {
-//             console.error(`❌ Error al eliminar ${table}:`, err);
-//           } else {
-//             console.log(`✅ Registros eliminados de ${table}`);
-//             deleted.push(table);
-//           }
-//           deleteNext(i + 1);
-//         });
-//       };
+//         console.log("✅ Nueva base de datos creada correctamente.");
 
-//       deleteNext(0);
+//         // Crear las tablas básicas de nuevo
+//         db.serialize(() => {
+//           db.run(`
+//             CREATE TABLE IF NOT EXISTS users (
+//               id INTEGER PRIMARY KEY AUTOINCREMENT,
+//               username TEXT UNIQUE,
+//               password TEXT,
+//               role TEXT
+//             )
+//           `);
+
+//           db.run(`
+//             CREATE TABLE IF NOT EXISTS employees (
+//               id INTEGER PRIMARY KEY AUTOINCREMENT,
+//               nombre TEXT,
+//               tipo TEXT,
+//               salario_mensual REAL
+//             )
+//           `);
+
+//           db.run(`
+//             CREATE TABLE IF NOT EXISTS attendance (
+//               id INTEGER PRIMARY KEY AUTOINCREMENT,
+//               employee_id INTEGER,
+//               fecha TEXT,
+//               hora_entrada TEXT,
+//               hora_salida TEXT,
+//               horas_extras REAL,
+//               moniado REAL
+//             )
+//           `);
+
+//           db.run(`
+//             CREATE TABLE IF NOT EXISTS production (
+//               id INTEGER PRIMARY KEY AUTOINCREMENT,
+//               employee_id INTEGER,
+//               cantidad REAL,
+//               fecha TEXT
+//             )
+//           `);
+
+//           // Insertar usuario admin por defecto
+//           const bcrypt = require("bcryptjs");
+//           const hashedPassword = bcrypt.hashSync("admin123", 10);
+//           db.run(
+//             `INSERT INTO users (username, password, role) VALUES (?, ?, ?)`,
+//             ["admin", hashedPassword, "admin"]
+//           );
+
+//           res.json({
+//             success: true,
+//             message:
+//               "Base de datos reiniciada correctamente. Se creó un nuevo archivo database.sqlite con estructura limpia y usuario admin.",
+//           });
+
+//           console.log("🎉 Base de datos reiniciada correctamente y usuario admin insertado.");
+//         });
+//       });
 //     });
 //   } catch (error) {
-//     console.error("❌ Error al limpiar la base:", error);
-//     res.status(500).json({ error: "Error al limpiar los registros." });
+//     console.error("❌ Error general al reiniciar la base:", error);
+//     res.status(500).json({ error: "Error general al reiniciar la base de datos." });
 //   }
 // });
 
-// console.log("🚀 Endpoint /api/cleanup registrado correctamente (limpieza tolerante)");
+// console.log("🚀 Endpoint /api/resetdb registrado correctamente");
 
 // ==========================
 // ⚠️ MANEJO DE 404 Y ERRORES
