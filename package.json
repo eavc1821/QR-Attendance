@@ -1,25 +1,21 @@
 {
-  "name": "asistencia-qr-backend",
+  "name": "qr-attendance-backend",
   "version": "1.0.0",
-  "description": "Backend para sistema de control de asistencia QR",
+  "description": "Backend Express + PostgreSQL para sistema de asistencia QR",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
-    "setup": "npm install",
-    "build": "npm rebuild sqlite3 --build-from-source"
+    "dev": "nodemon server.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
-    "qrcode": "^1.5.4",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7"
+    "pg": "^8.11.3"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "nodemon": "^3.0.2"
   }
 }
