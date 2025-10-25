@@ -22,6 +22,28 @@ app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
 // ==========================
+// 🔐 VERIFICACIÓN DE TOKEN (para restaurar sesión desde frontend)
+// ==========================
+app.get("/api/verify-token", (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    console.warn("❌ No se encontró el encabezado Authorization");
+    return res.json({ valid: false });
+  }
+
+  const token = authHeader.split(" ")[1];
+  try {
+    jwt.verify(token, JWT_SECRET);
+    console.log("✅ Token válido");
+    res.json({ valid: true });
+  } catch (err) {
+    console.warn("⚠️ Token inválido o expirado:", err.message);
+    res.json({ valid: false });
+  }
+});
+
+
+// ==========================
 // 📁 CONFIGURAR CARPETA DE UPLOADS
 // ==========================
 const uploadsDir = path.join(__dirname, "uploads");
