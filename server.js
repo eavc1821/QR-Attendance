@@ -63,9 +63,7 @@ let db;
     );
   `);
 
-  console.log("✅ Base de datos inicializada");
-})();
-
+  
   // ==========================
   // 👤 CREAR USUARIO ADMIN POR DEFECTO
   // ==========================
@@ -86,6 +84,9 @@ let db;
   }
 
   console.log("✅ Base de datos inicializada");
+})();
+
+
 
 
 // ==========================
