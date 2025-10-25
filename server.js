@@ -18,7 +18,11 @@ const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || "asistencia_qr_secret_key_2024";
 const BASE_URL = process.env.BASE_URL || "https://qr-attendance-production-27a2.up.railway.app";
 
-app.use(cors());
+app.use(cors({
+  origin: '*', // o tu dominio de frontend si prefieres restringir
+  credentials: true
+}));
+
 app.use(express.json({ limit: "10mb" }));
 
 // ==========================
@@ -53,6 +57,8 @@ if (!fs.existsSync(uploadsDir)) {
 
 // ✅ Servir archivos estáticos (fotos y QRs)
 app.use("/uploads", express.static(uploadsDir));
+
+
 
 // ==========================
 // 🔐 FUNCIONES AUXILIARES
