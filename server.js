@@ -239,6 +239,95 @@ app.get("/api/health", (req, res) => {
 });
 
 // ==========================
+// 👥 RUTAS DE GESTIÓN DE USUARIOS
+// ==========================
+
+// 📋 Obtener todos los usuarios
+app.get("/api/users", authenticateToken, (req, res) => {
+  db.all("SELECT id, username, role, name, created_at FROM users", [], (err, rows) => {
+    if (err) {
+      console.error("Error al obtener usuarios:", err);
+      return res.status(500).json({ error: "Error al obtener usuarios" });
+    }
+    res.json(rows);
+  });
+});
+
+// ➕ Crear nuevo usuario
+app.post("/api/users", authenticateToken, (req, res) => {
+  const { username, password, role, name } = req.body;
+  if (!username || !password || !role)
+    return res.status(400).json({ error: "Todos los campos son requeridos" });
+
+  const hashed = bcrypt.hashSync(password, 10);
+  const createdAt = new Date().toISOString();
+
+  db.run(
+    "INSERT INTO users (username, password, role, name, created_at) VALUES (?, ?, ?, ?, ?)",
+    [username, hashed, role, name || username, createdAt],
+    function (err) {
+      if (err) {
+        console.error("Error creando usuario:", err);
+        if (err.message.includes("UNIQUE constraint failed"))
+          return res.status(400).json({ error: "El usuario ya existe" });
+        return res.status(500).json({ error: "Error al crear usuario" });
+      }
+      res.status(201).json({ id: this.lastID, username, role, name, created_at: createdAt });
+    }
+  );
+});
+
+// ✏️ Actualizar usuario (nombre, rol o contraseña)
+app.put("/api/users/:id", authenticateToken, (req, res) => {
+  const { username, password, role, name } = req.body;
+  const { id } = req.params;
+
+  if (!username || !role)
+    return res.status(400).json({ error: "Usuario y rol son requeridos" });
+
+  db.get("SELECT * FROM users WHERE id = ?", [id], (err, user) => {
+    if (err) return res.status(500).json({ error: "Error al buscar usuario" });
+    if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
+
+    let query = "UPDATE users SET username = ?, role = ?, name = ? WHERE id = ?";
+    let params = [username, role, name, id];
+
+    if (password && password.trim() !== "") {
+      const hashed = bcrypt.hashSync(password, 10);
+      query = "UPDATE users SET username = ?, password = ?, role = ?, name = ? WHERE id = ?";
+      params = [username, hashed, role, name, id];
+    }
+
+    db.run(query, params, function (updateErr) {
+      if (updateErr) {
+        console.error("Error actualizando usuario:", updateErr);
+        return res.status(500).json({ error: "Error al actualizar usuario" });
+      }
+      res.json({ id, username, role, name });
+    });
+  });
+});
+
+// ❌ Eliminar usuario
+app.delete("/api/users/:id", authenticateToken, (req, res) => {
+  const { id } = req.params;
+
+  db.get("SELECT * FROM users WHERE id = ?", [id], (err, user) => {
+    if (err) return res.status(500).json({ error: "Error al buscar usuario" });
+    if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
+
+    db.run("DELETE FROM users WHERE id = ?", [id], function (deleteErr) {
+      if (deleteErr) {
+        console.error("Error al eliminar usuario:", deleteErr);
+        return res.status(500).json({ error: "Error al eliminar usuario" });
+      }
+      res.json({ message: "Usuario eliminado correctamente" });
+    });
+  });
+});
+
+
+// ==========================
 // ⚠️ MANEJO DE RUTAS 404
 // ==========================
 app.use("/api/*", (req, res) => {
