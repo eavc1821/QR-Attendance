@@ -1,5 +1,3 @@
-
-
 {
   "name": "qr-attendance-backend",
   "version": "1.0.0",
@@ -19,5 +17,19 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
-  }
+  },
+  "engines": {
+    "node": "22.x",
+    "npm": "10.x"
+  },
+  "keywords": [
+    "express",
+    "postgresql",
+    "api",
+    "railway",
+    "attendance",
+    "backend"
+  ],
+  "author": "Alejandro Cárcamo",
+  "license": "MIT"
 }
