@@ -1,471 +1,376 @@
-// ==========================
-// 📦 IMPORTS Y CONFIGURACIÓN BASE
-// ==========================
-const express = require("express");
-const cors = require("cors");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const QRCode = require("qrcode");
-const db = require("./database"); // conexión sqlite
-const path = require("path");
-const fs = require("fs");
+import express from "express";
+import cors from "cors";
+import sqlite3 from "sqlite3";
+import { open } from "sqlite";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 
-// ==========================
-// ⚙️ CONFIGURACIÓN DEL SERVIDOR
-// ==========================
 const app = express();
-const PORT = process.env.PORT || 8080;
-const JWT_SECRET = process.env.JWT_SECRET || "asistencia_qr_secret_key_2024";
-const BASE_URL = process.env.BASE_URL || "https://qr-attendance-production-27a2.up.railway.app";
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || "clave_super_segura";
 
-app.use(cors({
-  origin: '*', // o tu dominio de frontend si prefieres restringir
-  credentials: true
-}));
-
-app.use(express.json({ limit: "10mb" }));
+app.use(cors({ origin: "*", credentials: true }));
+app.use(express.json());
 
 // ==========================
-// 🔐 VERIFICACIÓN DE TOKEN (para restaurar sesión desde frontend)
+// 🗄️ BASE DE DATOS
 // ==========================
-app.get("/api/verify-token", (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    console.warn("❌ No se encontró el encabezado Authorization");
-    return res.json({ valid: false });
-  }
+let db;
+(async () => {
+  db = await open({
+    filename: "./database.sqlite",
+    driver: sqlite3.Database,
+  });
 
-  const token = authHeader.split(" ")[1];
-  try {
-    jwt.verify(token, JWT_SECRET);
-    console.log("✅ Token válido");
-    res.json({ valid: true });
-  } catch (err) {
-    console.warn("⚠️ Token inválido o expirado:", err.message);
-    res.json({ valid: false });
-  }
-});
+  // Crear tablas si no existen
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      role TEXT NOT NULL,
+      name TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
 
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS employees (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      dni TEXT UNIQUE,
+      employee_type TEXT,
+      qr_code TEXT UNIQUE,
+      salario_mensual REAL DEFAULT 0
+    );
+  `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS attendance (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      employee_id INTEGER NOT NULL,
+      record_type TEXT NOT NULL,
+      record_date DATE NOT NULL,
+      record_time TIME NOT NULL,
+      bags_elaborated INTEGER DEFAULT NULL,
+      despalillo INTEGER DEFAULT NULL,
+      escogida INTEGER DEFAULT NULL,
+      moniado INTEGER DEFAULT NULL,
+      horas_extras INTEGER DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (employee_id) REFERENCES employees (id)
+    );
+  `);
+
+  console.log("✅ Base de datos inicializada");
+})();
 
 // ==========================
-// 📁 CONFIGURAR CARPETA DE UPLOADS
+// 🔐 AUTENTICACIÓN
 // ==========================
-const uploadsDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir);
+function generateToken(user) {
+  return jwt.sign(
+    { id: user.id, username: user.username, role: user.role },
+    JWT_SECRET,
+    { expiresIn: "12h" }
+  );
 }
 
-// ✅ Servir archivos estáticos (fotos y QRs)
-app.use("/uploads", express.static(uploadsDir));
-
-
-
-// ==========================
-// 🔐 FUNCIONES AUXILIARES
-// ==========================
 function authenticateToken(req, res, next) {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
-  if (!token) return res.sendStatus(401);
+  if (!token) return res.status(401).json({ error: "Token requerido" });
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      console.error("Token inválido:", err);
-      return res.sendStatus(403);
-    }
+    if (err) return res.status(403).json({ error: "Token inválido" });
     req.user = user;
     next();
   });
 }
 
 // ==========================
-// 🧍 LOGIN DE USUARIO
+// 🔑 LOGIN Y TOKEN
 // ==========================
-app.post("/api/login", (req, res) => {
+app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
-  db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
-    if (err) {
-      console.error("Error buscando usuario:", err);
-      return res.status(500).json({ error: "Error interno del servidor" });
-    }
-    if (!user || !bcrypt.compareSync(password, user.password)) {
-      return res.status(401).json({ error: "Credenciales inválidas" });
-    }
+  try {
+    const user = await db.get("SELECT * FROM users WHERE username = ?", [username]);
+    if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
-    const token = jwt.sign(
-      { id: user.id, username: user.username, role: user.role },
-      JWT_SECRET,
-      { expiresIn: "8h" }
-    );
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) return res.status(401).json({ error: "Contraseña incorrecta" });
 
+    const token = generateToken(user);
     res.json({
       message: "Login exitoso",
       token,
       user: { id: user.id, username: user.username, role: user.role, name: user.name },
     });
-  });
-});
-
-// ==========================
-// 👤 CREAR NUEVO EMPLEADO + QR
-// ==========================
-app.post("/api/employees", authenticateToken, (req, res) => {
-  try {
-    const { dni, first_name, last_name, employee_type, photo, salario_mensual } = req.body;
-
-    if (!dni || !first_name || !last_name || !employee_type)
-      return res.status(400).json({ error: "Todos los campos son requeridos" });
-
-    if (!/^\d{13}$/.test(dni))
-      return res.status(400).json({ error: "El DNI debe tener exactamente 13 dígitos" });
-
-    if (employee_type === "Al Dia") {
-      if (!salario_mensual && salario_mensual !== 0)
-        return res.status(400).json({ error: "El salario mensual es requerido para empleados Al Dia" });
-      const salario = parseFloat(salario_mensual);
-      if (isNaN(salario) || salario < 0)
-        return res.status(400).json({ error: "El salario mensual debe ser un número válido mayor o igual a 0" });
-    }
-
-    // 📦 Crear carpeta de QRs si no existe
-    const qrDir = path.join(uploadsDir, "qrs");
-    if (!fs.existsSync(qrDir)) fs.mkdirSync(qrDir, { recursive: true });
-
-    const qrCodeData = `EMP-${dni}-${Date.now()}`;
-
-    // 🖼️ Guardar foto si existe
-    let photoFilename = null;
-    if (photo) {
-      const matches = photo.match(/^data:image\/([A-Za-z-+/]+);base64,(.+)$/);
-      if (matches) {
-        const extension = matches[1] === "jpeg" ? "jpg" : matches[1];
-        photoFilename = `employee_${Date.now()}.${extension}`;
-        const photoBuffer = Buffer.from(matches[2], "base64");
-        fs.writeFileSync(path.join(uploadsDir, photoFilename), photoBuffer);
-      }
-    }
-
-    // 💾 Insertar empleado
-    const insertData = [dni, first_name, last_name, employee_type, photoFilename, qrCodeData];
-    let insertQuery = `
-      INSERT INTO employees (dni, first_name, last_name, employee_type, photo, qr_code)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `;
-
-    if (employee_type === "Al Dia") {
-      insertQuery = `
-        INSERT INTO employees (dni, first_name, last_name, employee_type, photo, qr_code, salario_mensual)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `;
-      insertData.push(parseFloat(salario_mensual));
-    }
-
-    db.run(insertQuery, insertData, function (err) {
-      if (err) {
-        console.error("Error al crear empleado:", err);
-        if (err.message.includes("UNIQUE constraint failed"))
-          return res.status(400).json({ error: "El DNI ya está registrado" });
-        return res.status(500).json({ error: "Error al crear empleado" });
-      }
-
-      const employeeId = this.lastID;
-
-      // 🧾 Generar y guardar QR físico
-      const qrFilePath = path.join(qrDir, `employee_${employeeId}.png`);
-      const qrPublicUrl = `${BASE_URL}/uploads/qrs/employee_${employeeId}.png`;
-
-      QRCode.toFile(qrFilePath, qrCodeData, { width: 300 }, (qrErr) => {
-        if (qrErr) {
-          console.error("Error al generar QR:", qrErr);
-          return res.status(500).json({ error: "Error al generar QR" });
-        }
-
-        // ✅ Guardar nombre del QR en DB
-        db.run(
-          "UPDATE employees SET qr_image = ? WHERE id = ?",
-          [`employee_${employeeId}.png`, employeeId],
-          (updateErr) => {
-            if (updateErr) console.error("Error al guardar QR en DB:", updateErr);
-
-            db.get("SELECT * FROM employees WHERE id = ?", [employeeId], (err, employee) => {
-              if (err) {
-                console.error("Error al obtener empleado creado:", err);
-                return res.status(500).json({ error: "Error al obtener empleado creado" });
-              }
-
-              const employeeWithPhoto = {
-                ...employee,
-                photo_url: employee.photo ? `${BASE_URL}/uploads/${employee.photo}` : null,
-                qr_url: qrPublicUrl,
-              };
-
-              res.status(201).json(employeeWithPhoto);
-            });
-          }
-        );
-      });
-    });
-  } catch (error) {
-    console.error("Error en creación de empleado:", error);
-    res.status(500).json({ error: "Error del servidor" });
+  } catch (err) {
+    console.error("Error en login:", err);
+    res.status(500).json({ error: "Error en el servidor" });
   }
 });
 
-// ==========================
-// 📋 OBTENER TODOS LOS EMPLEADOS
-// ==========================
-app.get("/api/employees", authenticateToken, (req, res) => {
-  db.all("SELECT * FROM employees", [], (err, rows) => {
-    if (err) {
-      console.error("Error al obtener empleados:", err);
-      return res.status(500).json({ error: "Error al obtener empleados" });
-    }
-
-    const employees = rows.map((e) => ({
-      ...e,
-      photo_url: e.photo ? `${BASE_URL}/uploads/${e.photo}` : null,
-      qr_url: e.qr_image ? `${BASE_URL}/uploads/qrs/${e.qr_image}` : null,
-    }));
-
-    res.json(employees);
-  });
+app.get("/api/verify-token", authenticateToken, (req, res) => {
+  res.json({ valid: true, user: req.user });
 });
 
 // ==========================
-// 🩺 HEALTH CHECK
+// 👥 USUARIOS
 // ==========================
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", message: "Servidor operativo" });
+app.get("/api/users", authenticateToken, async (req, res) => {
+  try {
+    const users = await db.all("SELECT id, username, role, name, created_at FROM users");
+    res.json(users);
+  } catch {
+    res.status(500).json({ error: "Error al obtener usuarios" });
+  }
 });
 
-// ==========================
-// 👥 RUTAS DE GESTIÓN DE USUARIOS
-// ==========================
-
-// 📋 Obtener todos los usuarios
-app.get("/api/users", authenticateToken, (req, res) => {
-  db.all("SELECT id, username, role, name, created_at FROM users", [], (err, rows) => {
-    if (err) {
-      console.error("Error al obtener usuarios:", err);
-      return res.status(500).json({ error: "Error al obtener usuarios" });
-    }
-    res.json(rows);
-  });
-});
-
-// ➕ Crear nuevo usuario
-app.post("/api/users", authenticateToken, (req, res) => {
+app.post("/api/users", authenticateToken, async (req, res) => {
   const { username, password, role, name } = req.body;
   if (!username || !password || !role)
     return res.status(400).json({ error: "Todos los campos son requeridos" });
 
   const hashed = bcrypt.hashSync(password, 10);
-  const createdAt = new Date().toISOString();
-
-  db.run(
-    "INSERT INTO users (username, password, role, name, created_at) VALUES (?, ?, ?, ?, ?)",
-    [username, hashed, role, name || username, createdAt],
-    function (err) {
-      if (err) {
-        console.error("Error creando usuario:", err);
-        if (err.message.includes("UNIQUE constraint failed"))
-          return res.status(400).json({ error: "El usuario ya existe" });
-        return res.status(500).json({ error: "Error al crear usuario" });
-      }
-      res.status(201).json({ id: this.lastID, username, role, name, created_at: createdAt });
-    }
-  );
+  try {
+    const result = await db.run(
+      "INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)",
+      [username, hashed, role, name]
+    );
+    res.status(201).json({ id: result.lastID, username, role, name });
+  } catch {
+    res.status(500).json({ error: "Error al crear usuario" });
+  }
 });
 
-// ✏️ Actualizar usuario (nombre, rol o contraseña)
-app.put("/api/users/:id", authenticateToken, (req, res) => {
+app.put("/api/users/:id", authenticateToken, async (req, res) => {
+  const { id } = req.params;
   const { username, password, role, name } = req.body;
-  const { id } = req.params;
-
-  if (!username || !role)
-    return res.status(400).json({ error: "Usuario y rol son requeridos" });
-
-  db.get("SELECT * FROM users WHERE id = ?", [id], (err, user) => {
-    if (err) return res.status(500).json({ error: "Error al buscar usuario" });
+  try {
+    const user = await db.get("SELECT * FROM users WHERE id = ?", [id]);
     if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
-
-    let query = "UPDATE users SET username = ?, role = ?, name = ? WHERE id = ?";
-    let params = [username, role, name, id];
-
-    if (password && password.trim() !== "") {
-      const hashed = bcrypt.hashSync(password, 10);
-      query = "UPDATE users SET username = ?, password = ?, role = ?, name = ? WHERE id = ?";
-      params = [username, hashed, role, name, id];
-    }
-
-    db.run(query, params, function (updateErr) {
-      if (updateErr) {
-        console.error("Error actualizando usuario:", updateErr);
-        return res.status(500).json({ error: "Error al actualizar usuario" });
-      }
-      res.json({ id, username, role, name });
-    });
-  });
+    const hashed = password ? bcrypt.hashSync(password, 10) : user.password;
+    await db.run(
+      "UPDATE users SET username = ?, password = ?, role = ?, name = ? WHERE id = ?",
+      [username, hashed, role, name, id]
+    );
+    res.json({ message: "Usuario actualizado" });
+  } catch {
+    res.status(500).json({ error: "Error al actualizar usuario" });
+  }
 });
 
-// ❌ Eliminar usuario
-app.delete("/api/users/:id", authenticateToken, (req, res) => {
-  const { id } = req.params;
-
-  db.get("SELECT * FROM users WHERE id = ?", [id], (err, user) => {
-    if (err) return res.status(500).json({ error: "Error al buscar usuario" });
-    if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
-
-    db.run("DELETE FROM users WHERE id = ?", [id], function (deleteErr) {
-      if (deleteErr) {
-        console.error("Error al eliminar usuario:", deleteErr);
-        return res.status(500).json({ error: "Error al eliminar usuario" });
-      }
-      res.json({ message: "Usuario eliminado correctamente" });
-    });
-  });
+app.delete("/api/users/:id", authenticateToken, async (req, res) => {
+  try {
+    await db.run("DELETE FROM users WHERE id = ?", [req.params.id]);
+    res.json({ message: "Usuario eliminado" });
+  } catch {
+    res.status(500).json({ error: "Error al eliminar usuario" });
+  }
 });
 
-
 // ==========================
-// 🕒 RUTAS DE REGISTROS DE ASISTENCIA (COMPATIBLE CON TU TABLA)
+// 🕒 ASISTENCIA
 // ==========================
-
-// 📋 Obtener registros (filtrados por fecha opcional)
 app.get("/api/attendance", authenticateToken, (req, res) => {
-  const { date } = req.query;
-
+  const { date, limit } = req.query;
   let query = `
-    SELECT 
-      a.id,
-      a.employee_id,
-      e.first_name,
-      e.last_name,
-      e.employee_type,
-      a.record_type,
-      a.record_date,
-      a.record_time,
-      a.bags_elaborated,
-      a.despalillo,
-      a.escogida,
-      a.moniado,
-      a.horas_extras
+    SELECT a.*, e.first_name, e.last_name, e.employee_type
     FROM attendance a
     JOIN employees e ON a.employee_id = e.id
   `;
-
   const params = [];
   if (date) {
     query += " WHERE a.record_date = ?";
     params.push(date);
   }
-
   query += " ORDER BY a.record_date DESC, a.record_time DESC";
+  if (limit) {
+    query += " LIMIT ?";
+    params.push(parseInt(limit));
+  }
 
   db.all(query, params, (err, rows) => {
-    if (err) {
-      console.error("Error al obtener registros de asistencia:", err);
-      return res.status(500).json({ error: "Error al obtener registros" });
-    }
-
+    if (err) return res.status(500).json({ error: "Error al obtener registros" });
     res.json(rows);
   });
 });
 
-
-// ➕ Registrar asistencia mediante escaneo QR o manual
 app.post("/api/attendance", (req, res) => {
-  const {
-    qr_code,
-    employee_id,
-    record_type,
-    bags_elaborated,
-    despalillo,
-    escogida,
-    moniado,
-    horas_extras,
-  } = req.body;
-
-  // Verificar datos obligatorios
+  const { qr_code, employee_id, record_type, bags_elaborated, despalillo, escogida, moniado, horas_extras } = req.body;
   if (!qr_code && !employee_id)
     return res.status(400).json({ error: "Se requiere qr_code o employee_id" });
-
   if (!record_type)
-    return res.status(400).json({ error: "El tipo de registro es requerido (entrada/salida)" });
+    return res.status(400).json({ error: "El tipo de registro es requerido" });
 
-  // Buscar empleado si se usó código QR
-  const findEmployee = qr_code
+  const queryEmp = qr_code
     ? "SELECT id, first_name, last_name FROM employees WHERE qr_code = ?"
     : "SELECT id, first_name, last_name FROM employees WHERE id = ?";
-
   const param = qr_code ? qr_code : employee_id;
 
-  db.get(findEmployee, [param], (err, employee) => {
-    if (err) {
-      console.error("Error al buscar empleado:", err);
-      return res.status(500).json({ error: "Error interno del servidor" });
-    }
-
-    if (!employee) {
-      return res.status(404).json({ error: "Empleado no encontrado" });
-    }
+  db.get(queryEmp, [param], (err, employee) => {
+    if (err || !employee) return res.status(404).json({ error: "Empleado no encontrado" });
 
     const now = new Date();
     const record_date = now.toISOString().split("T")[0];
-    const record_time = now.toISOString().split("T")[1].slice(0, 8);
+    const record_time = now.toTimeString().split(" ")[0];
 
-    const insertQuery = `
-      INSERT INTO attendance (
-        employee_id, record_type, record_date, record_time,
-        bags_elaborated, despalillo, escogida, moniado, horas_extras
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    const values = [
-      employee.id,
-      record_type,
-      record_date,
-      record_time,
-      bags_elaborated || null,
-      despalillo || null,
-      escogida || null,
-      moniado || null,
-      horas_extras || null,
-    ];
-
-    db.run(insertQuery, values, function (insertErr) {
-      if (insertErr) {
-        console.error("Error al insertar registro de asistencia:", insertErr);
-        return res.status(500).json({ error: "Error al guardar registro de asistencia" });
+    db.run(
+      `INSERT INTO attendance (employee_id, record_type, record_date, record_time, bags_elaborated, despalillo, escogida, moniado, horas_extras)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [employee.id, record_type, record_date, record_time, bags_elaborated, despalillo, escogida, moniado, horas_extras],
+      function (err2) {
+        if (err2) return res.status(500).json({ error: "Error al registrar asistencia" });
+        res.status(201).json({
+          message: "Registro de asistencia creado correctamente",
+          id: this.lastID,
+          employee,
+          record_type,
+          record_date,
+          record_time,
+        });
       }
+    );
+  });
+});
 
-      res.status(201).json({
-        message: "Registro de asistencia creado correctamente",
-        id: this.lastID,
-        employee,
-        record_type,
-        record_date,
-        record_time,
+// 📊 Estadísticas de asistencia
+app.get("/api/attendance/stats", authenticateToken, (req, res) => {
+  const { start_date, end_date } = req.query;
+  let whereClause = "";
+  const params = [];
+  if (start_date && end_date) {
+    whereClause = "WHERE record_date BETWEEN ? AND ?";
+    params.push(start_date, end_date);
+  }
+
+  const stats = {};
+  db.get(`SELECT COUNT(*) as total FROM attendance ${whereClause}`, params, (err, row) => {
+    stats.totalRecords = row?.total || 0;
+    db.get(
+      `SELECT SUM(CASE WHEN record_type='entrada' THEN 1 ELSE 0 END) as entradas,
+              SUM(CASE WHEN record_type='salida' THEN 1 ELSE 0 END) as salidas
+       FROM attendance ${whereClause}`,
+      params,
+      (err2, r2) => {
+        stats.recordsByType = r2;
+        res.json(stats);
+      }
+    );
+  });
+});
+
+// 🧹 Limpieza
+app.delete("/api/attendance/cleanup", authenticateToken, (req, res) => {
+  const { start_date, end_date, confirmation } = req.body;
+  if (confirmation !== "ELIMINAR_REGISTROS")
+    return res.status(400).json({ error: "Confirmación inválida" });
+
+  let where = "";
+  const params = [];
+  if (start_date && end_date) {
+    where = "WHERE record_date BETWEEN ? AND ?";
+    params.push(start_date, end_date);
+  }
+
+  db.run(`DELETE FROM attendance ${where}`, params, function (err) {
+    if (err) return res.status(500).json({ error: "Error al eliminar registros" });
+    res.json({ message: "Registros eliminados", deleted: this.changes });
+  });
+});
+
+// ==========================
+// 📈 REPORTES
+// ==========================
+app.get("/api/reports/quick-stats", authenticateToken, (req, res) => {
+  const today = new Date().toISOString().split("T")[0];
+  const result = {};
+  db.get("SELECT COUNT(*) as total FROM employees", [], (err, e) => {
+    result.totalEmployees = e.total;
+    db.get("SELECT COUNT(*) as total FROM attendance WHERE record_date = ?", [today], (err2, r2) => {
+      result.todayRecords = r2?.total || 0;
+      db.get("SELECT COUNT(*) as total FROM attendance WHERE strftime('%Y-%m', record_date)=strftime('%Y-%m','now')", [], (err3, m) => {
+        result.monthRecords = m?.total || 0;
+        res.json(result);
       });
     });
   });
 });
 
+app.get("/api/reports/daily", authenticateToken, (req, res) => {
+  const { date } = req.query;
+  if (!date) return res.status(400).json({ error: "Fecha requerida" });
+  db.all(
+    `SELECT a.*, e.first_name, e.last_name, e.employee_type FROM attendance a 
+     JOIN employees e ON a.employee_id=e.id WHERE a.record_date=? ORDER BY a.record_time`,
+    [date],
+    (err, rows) => res.json(rows)
+  );
+});
 
-// ==========================
-// ⚠️ MANEJO DE RUTAS 404
-// ==========================
-app.use("/api/*", (req, res) => {
-  console.log(`Ruta no encontrada: ${req.method} ${req.originalUrl}`);
-  res.status(404).json({ error: "Endpoint no encontrado" });
+app.get("/api/reports/weekly", authenticateToken, (req, res) => {
+  const { start_date, end_date } = req.query;
+  db.all(
+    `SELECT a.*, e.first_name, e.last_name, e.employee_type FROM attendance a 
+     JOIN employees e ON a.employee_id=e.id WHERE a.record_date BETWEEN ? AND ?`,
+    [start_date, end_date],
+    (err, rows) => res.json(rows)
+  );
+});
+
+app.get("/api/reports/monthly", authenticateToken, (req, res) => {
+  const { month } = req.query;
+  db.all(
+    `SELECT a.*, e.first_name, e.last_name, e.employee_type FROM attendance a 
+     JOIN employees e ON a.employee_id=e.id WHERE strftime('%Y-%m', a.record_date)=?`,
+    [month],
+    (err, rows) => res.json(rows)
+  );
+});
+
+app.get("/api/reports/employees-detailed", authenticateToken, (req, res) => {
+  db.all(
+    `SELECT e.*, COUNT(a.id) as total_records,
+            SUM(CASE WHEN a.record_type='entrada' THEN 1 ELSE 0 END) as entradas,
+            SUM(CASE WHEN a.record_type='salida' THEN 1 ELSE 0 END) as salidas
+     FROM employees e
+     LEFT JOIN attendance a ON e.id=a.employee_id
+     GROUP BY e.id`,
+    [],
+    (err, rows) => res.json(rows)
+  );
 });
 
 // ==========================
-// 🚀 INICIAR SERVIDOR
+// 📊 DASHBOARD PRINCIPAL
 // ==========================
-app.listen(PORT, () => {
-  console.log(`✅ Servidor corriendo en puerto ${PORT}`);
-  console.log(`🌐 BASE_URL: ${BASE_URL}`);
-  console.log(`📊 Health check en /api/health`);
+app.get("/api/dashboard/stats", authenticateToken, (req, res) => {
+  const today = new Date().toISOString().split("T")[0];
+  const stats = {};
+  db.get("SELECT COUNT(*) AS total FROM employees", [], (err, row) => {
+    stats.total_employees = row.total;
+    db.get("SELECT COUNT(*) AS total FROM attendance WHERE record_date = ?", [today], (err2, row2) => {
+      stats.today_records = row2?.total || 0;
+      db.get("SELECT COUNT(DISTINCT employee_id) AS total FROM attendance WHERE record_date = ?", [today], (err3, row3) => {
+        stats.present_employees = row3?.total || 0;
+        stats.absent_employees = Math.max(stats.total_employees - stats.present_employees, 0);
+        res.json(stats);
+      });
+    });
+  });
 });
+
+// ==========================
+// 🚦 SALUD
+// ==========================
+app.get("/api/health", (req, res) => res.json({ status: "Servidor activo 🚀" }));
+
+// ==========================
+// 🚫 404
+// ==========================
+app.use((req, res) => res.status(404).json({ error: "Endpoint no encontrado" }));
+
+app.listen(PORT, () => console.log(`🚀 Servidor corriendo en puerto ${PORT}`));
