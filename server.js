@@ -328,6 +328,132 @@ app.delete("/api/users/:id", authenticateToken, (req, res) => {
 
 
 // ==========================
+// 🕒 RUTAS DE REGISTROS DE ASISTENCIA (COMPATIBLE CON TU TABLA)
+// ==========================
+
+// 📋 Obtener registros (filtrados por fecha opcional)
+app.get("/api/attendance", authenticateToken, (req, res) => {
+  const { date } = req.query;
+
+  let query = `
+    SELECT 
+      a.id,
+      a.employee_id,
+      e.first_name,
+      e.last_name,
+      e.employee_type,
+      a.record_type,
+      a.record_date,
+      a.record_time,
+      a.bags_elaborated,
+      a.despalillo,
+      a.escogida,
+      a.moniado,
+      a.horas_extras
+    FROM attendance a
+    JOIN employees e ON a.employee_id = e.id
+  `;
+
+  const params = [];
+  if (date) {
+    query += " WHERE a.record_date = ?";
+    params.push(date);
+  }
+
+  query += " ORDER BY a.record_date DESC, a.record_time DESC";
+
+  db.all(query, params, (err, rows) => {
+    if (err) {
+      console.error("Error al obtener registros de asistencia:", err);
+      return res.status(500).json({ error: "Error al obtener registros" });
+    }
+
+    res.json(rows);
+  });
+});
+
+
+// ➕ Registrar asistencia mediante escaneo QR o manual
+app.post("/api/attendance", (req, res) => {
+  const {
+    qr_code,
+    employee_id,
+    record_type,
+    bags_elaborated,
+    despalillo,
+    escogida,
+    moniado,
+    horas_extras,
+  } = req.body;
+
+  // Verificar datos obligatorios
+  if (!qr_code && !employee_id)
+    return res.status(400).json({ error: "Se requiere qr_code o employee_id" });
+
+  if (!record_type)
+    return res.status(400).json({ error: "El tipo de registro es requerido (entrada/salida)" });
+
+  // Buscar empleado si se usó código QR
+  const findEmployee = qr_code
+    ? "SELECT id, first_name, last_name FROM employees WHERE qr_code = ?"
+    : "SELECT id, first_name, last_name FROM employees WHERE id = ?";
+
+  const param = qr_code ? qr_code : employee_id;
+
+  db.get(findEmployee, [param], (err, employee) => {
+    if (err) {
+      console.error("Error al buscar empleado:", err);
+      return res.status(500).json({ error: "Error interno del servidor" });
+    }
+
+    if (!employee) {
+      return res.status(404).json({ error: "Empleado no encontrado" });
+    }
+
+    const now = new Date();
+    const record_date = now.toISOString().split("T")[0];
+    const record_time = now.toISOString().split("T")[1].slice(0, 8);
+
+    const insertQuery = `
+      INSERT INTO attendance (
+        employee_id, record_type, record_date, record_time,
+        bags_elaborated, despalillo, escogida, moniado, horas_extras
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const values = [
+      employee.id,
+      record_type,
+      record_date,
+      record_time,
+      bags_elaborated || null,
+      despalillo || null,
+      escogida || null,
+      moniado || null,
+      horas_extras || null,
+    ];
+
+    db.run(insertQuery, values, function (insertErr) {
+      if (insertErr) {
+        console.error("Error al insertar registro de asistencia:", insertErr);
+        return res.status(500).json({ error: "Error al guardar registro de asistencia" });
+      }
+
+      res.status(201).json({
+        message: "Registro de asistencia creado correctamente",
+        id: this.lastID,
+        employee,
+        record_type,
+        record_date,
+        record_time,
+      });
+    });
+  });
+});
+
+
+// ==========================
 // ⚠️ MANEJO DE RUTAS 404
 // ==========================
 app.use("/api/*", (req, res) => {
