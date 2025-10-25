@@ -66,6 +66,28 @@ let db;
   console.log("✅ Base de datos inicializada");
 })();
 
+  // ==========================
+  // 👤 CREAR USUARIO ADMIN POR DEFECTO
+  // ==========================
+  try {
+    const adminExists = await db.get("SELECT * FROM users WHERE username = 'admin'");
+    if (!adminExists) {
+      const hashedPassword = bcrypt.hashSync("admin123", 10);
+      await db.run(
+        "INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)",
+        ["admin", hashedPassword, "Administrador", "Admin General"]
+      );
+      console.log("👤 Usuario admin creado por defecto (admin / admin123)");
+    } else {
+      console.log("✅ Usuario admin ya existe, no se crea duplicado.");
+    }
+  } catch (err) {
+    console.error("❌ Error al verificar o crear usuario admin:", err);
+  }
+
+  console.log("✅ Base de datos inicializada");
+
+
 // ==========================
 // 🔐 AUTENTICACIÓN
 // ==========================
