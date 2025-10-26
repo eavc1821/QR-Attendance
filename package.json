@@ -1,6 +1,6 @@
 {
   "name": "qr-attendance-backend",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Sistema de asistencia QR con Node.js + Express + SQLite",
   "main": "server.js",
   "type": "module",
@@ -14,6 +14,7 @@
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
+    "qrcode": "^1.5.3",
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.6"
   },
@@ -23,12 +24,17 @@
   "engines": {
     "node": ">=18"
   },
+  "overrides": {
+    "node-gyp": "^10.1.0"
+  },
+  "packageManager": "npm@10.9.2",
   "keywords": [
     "express",
     "sqlite",
     "attendance",
     "qr",
-    "backend"
+    "backend",
+    "railway"
   ],
   "license": "MIT"
 }
