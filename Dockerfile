@@ -1,25 +1,20 @@
-# Usa una imagen limpia de Node.js
-FROM node:22
+# ---------- Etapa base ----------
+FROM node:22-alpine AS base
 
 WORKDIR /app
-
-# Copia los archivos de dependencias
 COPY package*.json ./
 
-# Configura un registro alternativo y desactiva la verificación de integridad
-RUN npm config set registry https://registry.npmmirror.com \
-    && npm config set strict-ssl false \
-    && npm config set legacy-peer-deps true \
+# Configuración del cache de npm (para evitar corrupción de paquetes)
+RUN npm config set registry https://registry.npmjs.org/ \
     && npm config set fetch-retries 5 \
     && npm config set fetch-retry-factor 3 \
     && npm config set fetch-timeout 30000 \
-    && npm config set cache /tmp/npm-cache --global \
-    && npm cache clean --force \
     && npm install --omit=dev --no-audit --no-fund
 
-# Copia el resto del proyecto
 COPY . .
 
+# Puerto (Railway usa 8080 por defecto)
+ENV PORT=8080
 EXPOSE 8080
 
-CMD ["npm", "start"]
+CMD ["node", "server.js"]

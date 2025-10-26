@@ -1,241 +1,207 @@
-// ============================================
-// 🚀 Backend Express + PostgreSQL (Railway)
-// ============================================
-
 import express from "express";
 import cors from "cors";
-import pkg from "pg";
+import sqlite3 from "sqlite3";
+import { open } from "sqlite";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import compression from "compression";
 
-const { Pool } = pkg;
-
-// ==========================
-// 🔌 CONEXIÓN A POSTGRESQL
-// ==========================
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
-
-// Wrappers de compatibilidad (para mantener el mismo formato que SQLite)
-const db = {
-  get: async (query, params = []) => {
-    const { rows } = await pool.query(query, params);
-    return rows[0];
-  },
-  all: async (query, params = []) => {
-    const { rows } = await pool.query(query, params);
-    return rows;
-  },
-  run: async (query, params = []) => {
-    await pool.query(query, params);
-  },
-};
-
-// ==========================
-// ⚙️ CONFIGURACIÓN EXPRESS
-// ==========================
+// ===============================
+// 🔧 Configuración general
+// ===============================
 const app = express();
 const PORT = process.env.PORT || 8080;
-const JWT_SECRET = process.env.JWT_SECRET || "clave_super_segura";
+const JWT_SECRET = process.env.JWT_SECRET || "clave-super-secreta";
 
 app.use(cors());
 app.use(express.json());
+app.use(compression());
 
-// ==========================
-// 🧱 CREACIÓN DE TABLAS
-// ==========================
-(async () => {
-  try {
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username VARCHAR(100) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        role VARCHAR(50) DEFAULT 'user',
-        name VARCHAR(100)
-      );
-    `);
+// ===============================
+// 💾 Inicializar base de datos SQLite
+// ===============================
+let db;
 
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS employees (
-        id SERIAL PRIMARY KEY,
-        first_name VARCHAR(100) NOT NULL,
-        last_name VARCHAR(100) NOT NULL,
-        employee_type VARCHAR(50),
-        qr_code TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS attendance (
-        id SERIAL PRIMARY KEY,
-        employee_id INTEGER REFERENCES employees(id),
-        record_type VARCHAR(50) NOT NULL,
-        record_date DATE NOT NULL,
-        record_time TIME NOT NULL,
-        bags_elaborated INTEGER DEFAULT NULL,
-        despalillo INTEGER DEFAULT NULL,
-        escogida INTEGER DEFAULT NULL,
-        moniado INTEGER DEFAULT NULL,
-        horas_extras INTEGER DEFAULT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    // ==========================
-    // 👑 CREAR SUPERADMIN POR DEFECTO
-    // ==========================
-    const adminExists = await db.get(
-      "SELECT * FROM users WHERE username = 'admin'"
-    );
-    if (!adminExists) {
-      const hashed = bcrypt.hashSync("admin123", 10);
-      await db.run(
-        "INSERT INTO users (username, password, role, name) VALUES ($1, $2, $3, $4)",
-        ["admin", hashed, "superadmin", "Administrador General"]
-      );
-      console.log("👑 Usuario superadmin creado (admin / admin123)");
-    } else {
-      console.log("✅ Usuario admin ya existe, no se crea duplicado.");
-    }
-
-    console.log("✅ Tablas listas en PostgreSQL");
-  } catch (err) {
-    console.error("❌ Error al crear tablas:", err);
-  }
-})();
-
-// ==========================
-// 🔐 MIDDLEWARE AUTENTICACIÓN JWT
-// ==========================
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-  if (!token) return res.status(401).json({ error: "Token requerido" });
-
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ error: "Token inválido" });
-    req.user = user;
-    next();
+const initDB = async () => {
+  db = await open({
+    filename: "./database.db",
+    driver: sqlite3.Database,
   });
-}
 
-// ==========================
-// 🔑 LOGIN
-// ==========================
+  // Crear tablas si no existen
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      role TEXT DEFAULT 'user',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS employees (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      position TEXT,
+      department TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS attendance (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      employee_id INTEGER NOT NULL,
+      record_type TEXT NOT NULL,
+      record_date DATE NOT NULL,
+      record_time TIME NOT NULL,
+      bags_elaborated INTEGER DEFAULT NULL,
+      despalillo INTEGER DEFAULT NULL,
+      escogida INTEGER DEFAULT NULL,
+      moniado INTEGER DEFAULT NULL,
+      horas_extras INTEGER DEFAULT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (employee_id) REFERENCES employees (id)
+    );
+  `);
+
+  console.log("✅ Tablas creadas o existentes");
+
+  // Crear usuario admin si no existe
+  const admin = await db.get("SELECT * FROM users WHERE username = ?", ["admin"]);
+  if (!admin) {
+    const hash = await bcrypt.hash("admin123", 10);
+    await db.run(
+      "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+      ["admin", hash, "admin"]
+    );
+    console.log("👑 Usuario admin creado: admin / admin123");
+  } else {
+    console.log("🔹 Usuario admin ya existe");
+  }
+
+  return db;
+};
+
+// ===============================
+// 🔐 Login (Autenticación)
+// ===============================
 app.post("/api/login", async (req, res) => {
   const { username, password } = req.body;
 
   try {
-    const user = await db.get("SELECT * FROM users WHERE username = $1", [
-      username,
-    ]);
-
+    const user = await db.get("SELECT * FROM users WHERE username = ?", [username]);
     if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
-    const validPassword = bcrypt.compareSync(password, user.password);
-    if (!validPassword)
-      return res.status(401).json({ error: "Contraseña incorrecta" });
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) return res.status(401).json({ error: "Contraseña incorrecta" });
 
     const token = jwt.sign(
-      { id: user.id, username: user.username, role: user.role },
+      { id: user.id, role: user.role },
       JWT_SECRET,
       { expiresIn: "8h" }
     );
 
-    res.json({
-      message: "Login exitoso",
-      token,
-      user: {
-        id: user.id,
-        username: user.username,
-        role: user.role,
-        name: user.name,
-      },
-    });
+    res.json({ token, user });
   } catch (err) {
-    res.status(500).json({ error: "Error interno en login" });
+    console.error("❌ Error en login:", err);
+    res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 
-// ==========================
-// 👥 GESTIÓN DE EMPLEADOS
-// ==========================
-app.get("/api/employees", authenticateToken, async (req, res) => {
+// ===============================
+// 👥 Empleados
+// ===============================
+app.get("/api/employees", async (req, res) => {
   try {
-    const employees = await db.all("SELECT * FROM employees ORDER BY id DESC");
-    res.json(employees);
+    const rows = await db.all("SELECT * FROM employees ORDER BY id DESC");
+    res.json(rows);
   } catch (err) {
+    console.error("❌ Error al obtener empleados:", err);
     res.status(500).json({ error: "Error al obtener empleados" });
   }
 });
 
-app.post("/api/employees", authenticateToken, async (req, res) => {
-  const { first_name, last_name, employee_type } = req.body;
+app.post("/api/employees", async (req, res) => {
+  const { name, position, department } = req.body;
   try {
     await db.run(
-      "INSERT INTO employees (first_name, last_name, employee_type) VALUES ($1, $2, $3)",
-      [first_name, last_name, employee_type]
+      "INSERT INTO employees (name, position, department) VALUES (?, ?, ?)",
+      [name, position, department]
     );
-    res.json({ message: "Empleado agregado" });
+    res.json({ message: "Empleado registrado correctamente" });
   } catch (err) {
-    res.status(500).json({ error: "Error al agregar empleado" });
+    console.error("❌ Error al registrar empleado:", err);
+    res.status(500).json({ error: "Error al registrar empleado" });
   }
 });
 
-// ==========================
-// 🕒 REGISTROS DE ASISTENCIA
-// ==========================
-app.get("/api/attendance", authenticateToken, async (req, res) => {
+// ===============================
+// ⏱️ Asistencias
+// ===============================
+app.post("/api/attendance", async (req, res) => {
+  const {
+    employee_id,
+    record_type,
+    record_date,
+    record_time,
+    bags_elaborated,
+    despalillo,
+    escogida,
+    moniado,
+    horas_extras,
+  } = req.body;
+
   try {
-    const records = await db.all(`
-      SELECT a.*, e.first_name, e.last_name
-      FROM attendance a
-      JOIN employees e ON a.employee_id = e.id
-      ORDER BY a.record_date DESC, a.record_time DESC
-      LIMIT 100;
-    `);
-    res.json(records);
+    await db.run(
+      `INSERT INTO attendance 
+      (employee_id, record_type, record_date, record_time, bags_elaborated, despalillo, escogida, moniado, horas_extras)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        employee_id,
+        record_type,
+        record_date,
+        record_time,
+        bags_elaborated,
+        despalillo,
+        escogida,
+        moniado,
+        horas_extras,
+      ]
+    );
+    res.json({ message: "Registro de asistencia exitoso" });
   } catch (err) {
-    res.status(500).json({ error: "Error al obtener registros" });
+    console.error("❌ Error al registrar asistencia:", err);
+    res.status(500).json({ error: "Error al registrar asistencia" });
   }
 });
 
-// ==========================
-// 📊 DASHBOARD / ESTADÍSTICAS
-// ==========================
-app.get("/api/dashboard/stats", authenticateToken, async (req, res) => {
+// ===============================
+// 📊 Dashboard / estadísticas
+// ===============================
+app.get("/api/dashboard/stats", async (req, res) => {
   try {
-    const totalEmployees = await db.get(
-      "SELECT COUNT(*) AS total FROM employees"
-    );
-    const today = new Date().toISOString().split("T")[0];
-    const totalRecords = await db.get(
-      "SELECT COUNT(*) AS total FROM attendance WHERE record_date = $1",
-      [today]
-    );
+    const totalEmployees = await db.get("SELECT COUNT(*) as count FROM employees");
+    const totalRecords = await db.get("SELECT COUNT(*) as count FROM attendance");
+
     res.json({
-      total_employees: totalEmployees.total || 0,
-      today_records: totalRecords.total || 0,
+      totalEmployees: totalEmployees.count,
+      totalRecords: totalRecords.count,
     });
   } catch (err) {
-    res.status(500).json({ error: "Error obteniendo estadísticas" });
+    console.error("❌ Error al obtener estadísticas:", err);
+    res.status(500).json({ error: "Error al obtener estadísticas" });
   }
 });
 
-// ==========================
-// 🧩 SALUD DEL SERVIDOR
-// ==========================
-app.get("/api/health", (req, res) => {
-  res.json({ status: "Servidor activo 🚀" });
+// ===============================
+// 🧠 Verificación básica
+// ===============================
+app.get("/", (req, res) => {
+  res.send("✅ Backend con SQLite operativo 🚀");
 });
 
-// ==========================
-// 🚀 INICIAR SERVIDOR
-// ==========================
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor corriendo en puerto ${PORT}`);
+// ===============================
+// 🚀 Iniciar servidor
+// ===============================
+app.listen(PORT, async () => {
+  await initDB();
+  console.log(`🔥 Servidor corriendo en puerto ${PORT}`);
 });
