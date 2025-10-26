@@ -1,1 +1,2 @@
-web: npm install --omit=dev && npm start
+web: npm install --omit=dev --no-audit --no-fund && npm start
+
