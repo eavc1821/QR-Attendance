@@ -1,20 +1,25 @@
-# Usa la imagen oficial de Node
+# Usa una imagen limpia de Node.js
 FROM node:22
 
-# Establece el directorio de trabajo
 WORKDIR /app
 
-# Copia los archivos necesarios
+# Copia los archivos de dependencias
 COPY package*.json ./
 
-# Instala dependencias con npm install (evita npm ci)
-RUN npm install --omit=dev --legacy-peer-deps --no-audit --no-fund
+# Configura un registro alternativo y desactiva la verificación de integridad
+RUN npm config set registry https://registry.npmmirror.com \
+    && npm config set strict-ssl false \
+    && npm config set legacy-peer-deps true \
+    && npm config set fetch-retries 5 \
+    && npm config set fetch-retry-factor 3 \
+    && npm config set fetch-timeout 30000 \
+    && npm config set cache /tmp/npm-cache --global \
+    && npm cache clean --force \
+    && npm install --omit=dev --no-audit --no-fund
 
 # Copia el resto del proyecto
 COPY . .
 
-# Expone el puerto que usa Railway
 EXPOSE 8080
 
-# Arranca el servidor
 CMD ["npm", "start"]
