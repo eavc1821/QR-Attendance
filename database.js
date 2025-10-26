@@ -1,26 +1,40 @@
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
-const bcrypt = require('bcryptjs');
+import sqlite3 from "sqlite3";
+import { open } from "sqlite";
+import path from "path";
 
-const dbPath = path.join(__dirname, 'asistencia.db');
-const db = new sqlite3.Database(dbPath);
+let db;
 
-// Función para inicializar la base de datos
-const initializeDatabase = () => {
-  console.log('🔧 Inicializando base de datos...');
+// ===================================
+// 💾 Inicialización robusta de SQLite
+// ===================================
+export async function initDatabase() {
+  if (db) return db; // Evita reinicializaciones múltiples
 
-  // Crear tablas si no existen
-  const tables = [
-    `CREATE TABLE IF NOT EXISTS users (
+  try {
+    const dbPath = path.resolve("./asistencia.db");
+
+    db = await open({
+      filename: dbPath,
+      driver: sqlite3.Database,
+    });
+
+    // Permite operaciones concurrentes sin bloqueo
+    await db.exec("PRAGMA busy_timeout = 5000;");
+    await db.exec("PRAGMA journal_mode = WAL;");
+    await db.exec("PRAGMA foreign_keys = ON;");
+
+    // Creación de tablas
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
         role TEXT NOT NULL DEFAULT 'scanner',
         name TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`,
+      );
 
-    `CREATE TABLE IF NOT EXISTS employees (
+      CREATE TABLE IF NOT EXISTS employees (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         dni TEXT UNIQUE NOT NULL,
         first_name TEXT NOT NULL,
@@ -29,12 +43,12 @@ const initializeDatabase = () => {
         photo TEXT,
         qr_code TEXT UNIQUE NOT NULL,
         salario_mensual DECIMAL(10,2) DEFAULT NULL,
-        qr_image TEXT DEFAULT NULL,                 -- ✅ NUEVA COLUMNA PARA ARCHIVO PNG DEL QR
+        qr_image TEXT DEFAULT NULL,
         is_active BOOLEAN DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`,
+      );
 
-    `CREATE TABLE IF NOT EXISTS attendance (
+      CREATE TABLE IF NOT EXISTS attendance (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         employee_id INTEGER NOT NULL,
         record_type TEXT NOT NULL,
@@ -47,159 +61,41 @@ const initializeDatabase = () => {
         horas_extras INTEGER DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (employee_id) REFERENCES employees (id)
-    )`
-  ];
-
-  // Ejecutar creación de tablas
-  const createTable = (index) => {
-    if (index >= tables.length) {
-      insertDefaultUsers();
-      return;
-    }
-
-    db.run(tables[index], (err) => {
-      if (err) {
-        console.error(`❌ Error creando tabla ${index + 1}:`, err);
-      } else {
-        console.log(`✅ Tabla ${index + 1} creada/verificada`);
-      }
-      createTable(index + 1);
-    });
-  };
-
-  // Insertar usuarios por defecto
-  const insertDefaultUsers = () => {
-    const hashedAdminPassword = bcrypt.hashSync('admin123', 10);
-    const hashedScannerPassword = bcrypt.hashSync('scanner123', 10);
-
-    const users = [
-      ['admin', hashedAdminPassword, 'superadmin', 'Administrador Principal'],
-      ['scanner', hashedScannerPassword, 'scanner', 'Operador Scanner']
-    ];
-
-    const insertUser = (index) => {
-      if (index >= users.length) {
-        checkAdditionalColumns();
-        return;
-      }
-
-      db.run(
-        `INSERT OR IGNORE INTO users (username, password, role, name) VALUES (?, ?, ?, ?)`,
-        users[index],
-        (err) => {
-          if (err) {
-            console.error(`❌ Error insertando usuario ${users[index][0]}:`, err);
-          } else {
-            console.log(`✅ Usuario ${users[index][0]} verificado`);
-          }
-          insertUser(index + 1);
-        }
       );
-    };
+    `);
 
-    insertUser(0);
-  };
+    console.log("✅ Base de datos SQLite lista (asistencia.db)");
 
-  // Verificar columnas adicionales
-  const checkAdditionalColumns = () => {
-    console.log('🔍 Verificando columnas adicionales...');
+    return db;
+  } catch (error) {
+    console.error("❌ Error al inicializar la base de datos:", error);
+    throw error;
+  }
+}
 
-    // Verificar columnas en employees
-    db.all(`PRAGMA table_info(employees)`, (err, rows) => {
-      if (err) {
-        console.error('❌ Error al verificar estructura de employees:', err);
-        return;
-      }
+// ===================================
+// 🔁 Función de reconexión automática
+// ===================================
+export async function getDatabase() {
+  try {
+    if (!db) {
+      console.warn("⚠️ Base de datos no inicializada, reconectando...");
+      await initDatabase();
+    }
+    return db;
+  } catch (error) {
+    console.error("❌ Error en conexión a base de datos:", error);
+    throw error;
+  }
+}
 
-      if (rows && Array.isArray(rows)) {
-        const columnsToCheckEmployees = [
-          { name: 'salario_mensual', type: 'DECIMAL(10,2)' },
-          { name: 'qr_image', type: 'TEXT' } // ✅ Nueva columna para imagen de QR
-        ];
-
-        columnsToCheckEmployees.forEach((column) => {
-          const hasColumn = rows.some((row) => row.name === column.name);
-          if (!hasColumn) {
-            addColumnToEmployees(column.name, column.type);
-          } else {
-            console.log(`✅ Columna ${column.name} ya existe en employees`);
-          }
-        });
-      } else {
-        console.log('⚠️ No se pudieron obtener las columnas de employees');
-      }
-    });
-
-    // Verificar columnas en attendance
-    db.all(`PRAGMA table_info(attendance)`, (err, rows) => {
-      if (err) {
-        console.error('❌ Error al verificar estructura de attendance:', err);
-        return;
-      }
-
-      if (rows && Array.isArray(rows)) {
-        const columnsToCheckAttendance = [
-          { name: 'moniado', type: 'INTEGER' },
-          { name: 'horas_extras', type: 'INTEGER' }
-        ];
-
-        columnsToCheckAttendance.forEach((column) => {
-          const hasColumn = rows.some((row) => row.name === column.name);
-          if (!hasColumn) {
-            addColumnToAttendance(column.name, column.type);
-          } else {
-            console.log(`✅ Columna ${column.name} ya existe en attendance`);
-          }
-        });
-      } else {
-        console.log('⚠️ No se pudieron obtener las columnas de attendance');
-      }
-    });
-  };
-
-  // Agregar columna a employees
-  const addColumnToEmployees = (columnName, columnType) => {
-    console.log(`➕ Agregando columna ${columnName} a employees...`);
-    db.run(
-      `ALTER TABLE employees ADD COLUMN ${columnName} ${columnType} DEFAULT NULL`,
-      (err) => {
-        if (err) {
-          if (err.message.includes('duplicate column name')) {
-            console.log(`✅ Columna ${columnName} ya existe en employees`);
-          } else {
-            console.error(`❌ Error al agregar columna ${columnName} a employees:`, err);
-          }
-        } else {
-          console.log(`✅ Columna ${columnName} agregada exitosamente a employees`);
-        }
-      }
-    );
-  };
-
-  // Agregar columna a attendance
-  const addColumnToAttendance = (columnName, columnType) => {
-    console.log(`➕ Agregando columna ${columnName} a attendance...`);
-    db.run(
-      `ALTER TABLE attendance ADD COLUMN ${columnName} ${columnType} DEFAULT NULL`,
-      (err) => {
-        if (err) {
-          if (err.message.includes('duplicate column name')) {
-            console.log(`✅ Columna ${columnName} ya existe en attendance`);
-          } else {
-            console.error(`❌ Error al agregar columna ${columnName} a attendance:`, err);
-          }
-        } else {
-          console.log(`✅ Columna ${columnName} agregada exitosamente a attendance`);
-        }
-      }
-    );
-  };
-
-  // Iniciar proceso
-  createTable(0);
-};
-
-// Inicializar base de datos
-initializeDatabase();
-
-module.exports = db;
+// ===================================
+// 🔧 Cierre limpio (opcional)
+// ===================================
+export async function closeDatabase() {
+  if (db) {
+    await db.close();
+    db = null;
+    console.log("🧹 Conexión SQLite cerrada correctamente");
+  }
+}
