@@ -129,7 +129,7 @@ app.post("/api/login", async (req, res) => {
       { expiresIn: "8h" }
     );
 
-    res.json({ token, role: user.role, name: user.name });
+    res.json({ token, role: user.role, name: user.name }); //cambio de token
   } catch (err) {
     console.error("❌ Error en login:", err);
     res.status(500).json({ error: "Error en el servidor" });
