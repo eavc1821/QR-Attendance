@@ -5,17 +5,28 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import compression from "compression";
 import QRCode from "qrcode";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { Sequelize, DataTypes } from "sequelize";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 
+// 🧩 Rutas absolutas del proyecto
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 // ✅ Middlewares
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 app.use(compression());
+
+// 📁 Servir imágenes estáticas
+app.use("/uploads", express.static(path.join(__dirname, "public", "uploads")));
+app.use("/qrcodes", express.static(path.join(__dirname, "public", "qrcodes")));
 
 // ✅ Conexión a PostgreSQL
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -49,6 +60,7 @@ const Employee = sequelize.define("Employee", {
   salario_mensual: DataTypes.DECIMAL(10, 2),
   qr_code: { type: DataTypes.STRING, unique: true },
   qr_image: DataTypes.TEXT,
+  photo: DataTypes.TEXT,
   is_active: { type: DataTypes.BOOLEAN, defaultValue: true },
 });
 
@@ -73,10 +85,10 @@ const initDB = async () => {
     await sequelize.authenticate();
     console.log("✅ Conectado a PostgreSQL");
 
-    await sequelize.sync({ alter: true });
+    await sequelize.sync(); // ❗ No borra datos ni reinicia tablas
     console.log("🧩 Tablas sincronizadas correctamente");
 
-    // Índices para acelerar consultas
+    // Índices
     await sequelize.query(
       'CREATE INDEX IF NOT EXISTS idx_employees_dni ON "Employees" (dni);'
     );
@@ -193,10 +205,27 @@ app.get("/api/employees", authenticate, async (req, res) => {
 
 app.post("/api/employees", authenticate, async (req, res) => {
   try {
-    const { dni, first_name, last_name, employee_type, salario_mensual } =
-      req.body;
+    const { dni, first_name, last_name, employee_type, salario_mensual, photo } = req.body;
+
     const qr_code = `${dni}-${Date.now()}`;
-    const qr_image = await QRCode.toDataURL(qr_code);
+    const qrDir = path.join(__dirname, "public", "qrcodes");
+    if (!fs.existsSync(qrDir)) fs.mkdirSync(qrDir, { recursive: true });
+
+    const qrPath = path.join(qrDir, `${qr_code}.png`);
+    await QRCode.toFile(qrPath, qr_code);
+    const qr_url = `/qrcodes/${qr_code}.png`;
+
+    // Guardar imagen si se envía
+    let photo_url = null;
+    if (photo) {
+      const uploadDir = path.join(__dirname, "public", "uploads");
+      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+      const base64Data = photo.replace(/^data:image\/\w+;base64,/, "");
+      const photoPath = path.join(uploadDir, `${dni}.png`);
+      fs.writeFileSync(photoPath, Buffer.from(base64Data, "base64"));
+      photo_url = `/uploads/${dni}.png`;
+    }
 
     await Employee.create({
       dni,
@@ -205,10 +234,15 @@ app.post("/api/employees", authenticate, async (req, res) => {
       employee_type,
       salario_mensual,
       qr_code,
-      qr_image,
+      qr_image: qr_url,
+      photo: photo_url,
     });
 
-    res.json({ message: "Empleado registrado correctamente" });
+    res.json({
+      message: "Empleado registrado correctamente",
+      qr_url,
+      photo_url,
+    });
   } catch (err) {
     console.error("❌ Error al registrar empleado:", err);
     res.status(500).json({ error: "Error registrando empleado" });
@@ -224,7 +258,7 @@ app.get("/api/attendance", authenticate, async (req, res) => {
   res.json(records);
 });
 
-// 📊 Estadísticas del dashboard
+// 📊 Dashboard
 app.get("/api/dashboard/stats", authenticate, async (req, res) => {
   const totalEmployees = await Employee.count({ where: { is_active: true } });
   const totalRecords = await Attendance.count();
