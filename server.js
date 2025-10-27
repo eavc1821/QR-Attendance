@@ -235,28 +235,24 @@ app.get("/api/dashboard/stats", authenticate, async (req, res) => {
   }
 });
 
-// 🧹 Resetear base de datos en producción (mantiene usuarios)
-app.post("/api/reset-database", authenticate, async (req, res) => {
+// ✅ Verificar validez del token
+app.get("/api/verify-token", async (req, res) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.json({ valid: false });
+  }
+
   try {
-    // Solo superadmin puede ejecutar
-    if (req.user.role !== "superadmin") {
-      return res.status(403).json({ error: "Acceso denegado" });
-    }
+    const decoded = jwt.verify(token, JWT_SECRET);
+    // Opcional: verificar que el usuario aún exista
+    const user = await db.get("SELECT id, username, role, name FROM users WHERE id = ?", [decoded.id]);
+    if (!user) return res.json({ valid: false });
 
-    console.log("⚠️ Solicitando reset de base de datos...");
-
-    // Borrar tablas excepto users
-    await db.exec(`
-      DELETE FROM attendance;
-      DELETE FROM employees;
-      VACUUM;
-    `);
-
-    console.log("✅ Base de datos limpiada (usuarios conservados)");
-    res.json({ message: "Base de datos limpiada correctamente (usuarios conservados)" });
+    res.json({ valid: true, user });
   } catch (error) {
-    console.error("❌ Error al resetear la base de datos:", error);
-    res.status(500).json({ error: "Error interno al resetear la base de datos" });
+    res.json({ valid: false });
   }
 });
 
