@@ -256,7 +256,8 @@ app.get("/api/verify-token", async (req, res) => {
   }
 });
 
-//nuevos inicios del proyecto
+//nuevos inicios del proyecto para el backend
+
 // 🚀 Iniciar servidor
 initDB()
   .then(() => {
