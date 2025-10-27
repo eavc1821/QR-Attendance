@@ -1,87 +1,108 @@
+// server_postgres.js
 import express from "express";
 import cors from "cors";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
-import { open } from "sqlite";
-import sqlite3 from "sqlite3";
 import compression from "compression";
 import QRCode from "qrcode";
+import { Sequelize, DataTypes } from "sequelize";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 
+// ✅ Middlewares
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 app.use(compression());
 
-let db;
+// ✅ Conexión a PostgreSQL
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error("❌ FALTA la variable DATABASE_URL en Railway");
+  process.exit(1);
+}
 
-// 🧱 Inicializar base de datos SQLite
+const sequelize = new Sequelize(DATABASE_URL, {
+  dialect: "postgres",
+  dialectOptions: {
+    ssl: { require: true, rejectUnauthorized: false },
+  },
+  logging: false,
+  pool: { max: 15, min: 5, acquire: 30000, idle: 10000 },
+});
+
+// ✅ Modelos
+const User = sequelize.define("User", {
+  username: { type: DataTypes.STRING, unique: true, allowNull: false },
+  password: { type: DataTypes.STRING, allowNull: false },
+  role: { type: DataTypes.STRING, defaultValue: "scanner" },
+  name: { type: DataTypes.STRING, allowNull: false },
+});
+
+const Employee = sequelize.define("Employee", {
+  dni: { type: DataTypes.STRING, unique: true, allowNull: false },
+  first_name: { type: DataTypes.STRING, allowNull: false },
+  last_name: { type: DataTypes.STRING, allowNull: false },
+  employee_type: { type: DataTypes.STRING, allowNull: false },
+  salario_mensual: DataTypes.DECIMAL(10, 2),
+  qr_code: { type: DataTypes.STRING, unique: true },
+  qr_image: DataTypes.TEXT,
+  is_active: { type: DataTypes.BOOLEAN, defaultValue: true },
+});
+
+const Attendance = sequelize.define("Attendance", {
+  record_type: DataTypes.STRING,
+  record_date: DataTypes.DATEONLY,
+  record_time: DataTypes.TIME,
+  bags_elaborated: DataTypes.INTEGER,
+  despalillo: DataTypes.INTEGER,
+  escogida: DataTypes.INTEGER,
+  moniado: DataTypes.INTEGER,
+  horas_extras: DataTypes.INTEGER,
+});
+
+// 🔗 Relaciones
+Employee.hasMany(Attendance, { foreignKey: "employee_id" });
+Attendance.belongsTo(Employee, { foreignKey: "employee_id" });
+
+// 🧠 Inicialización
 const initDB = async () => {
-  db = await open({
-    filename: "./database.sqlite",
-    driver: sqlite3.Database,
-  });
+  try {
+    await sequelize.authenticate();
+    console.log("✅ Conectado a PostgreSQL");
 
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'scanner',
-      name TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+    await sequelize.sync({ alter: true });
+    console.log("🧩 Tablas sincronizadas correctamente");
 
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS employees (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      dni TEXT UNIQUE NOT NULL,
-      first_name TEXT NOT NULL,
-      last_name TEXT NOT NULL,
-      employee_type TEXT NOT NULL,
-      photo TEXT,
-      qr_code TEXT UNIQUE NOT NULL,
-      salario_mensual DECIMAL(10,2) DEFAULT NULL,
-      qr_image TEXT DEFAULT NULL,
-      is_active BOOLEAN DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    // Índices para acelerar consultas
+    await sequelize.query(
+      'CREATE INDEX IF NOT EXISTS idx_employees_dni ON "Employees" (dni);'
     );
-  `);
+    await sequelize.query(
+      'CREATE INDEX IF NOT EXISTS idx_attendance_date ON "Attendances" (record_date);'
+    );
 
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS attendance (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      employee_id INTEGER NOT NULL,
-      record_type TEXT NOT NULL,
-      record_date DATE NOT NULL,
-      record_time TIME NOT NULL,
-      bags_elaborated INTEGER DEFAULT NULL,
-      despalillo INTEGER DEFAULT NULL,
-      escogida INTEGER DEFAULT NULL,
-      moniado INTEGER DEFAULT NULL,
-      horas_extras INTEGER DEFAULT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (employee_id) REFERENCES employees (id)
-    );
-  `);
-
-  // 👑 Crear superadmin si no existe
-  const admin = await db.get("SELECT * FROM users WHERE username = 'admin'");
-  if (!admin) {
-    const hashedPassword = await bcrypt.hash("admin123", 10);
-    await db.run(
-      "INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)",
-      ["admin", hashedPassword, "superadmin", "Administrador General"]
-    );
-    console.log("✅ Usuario superadmin creado: admin / admin123");
+    // Crear superadmin si no existe
+    const admin = await User.findOne({ where: { username: "admin" } });
+    if (!admin) {
+      const hashed = await bcrypt.hash("admin123", 10);
+      await User.create({
+        username: "admin",
+        password: hashed,
+        role: "superadmin",
+        name: "Administrador General",
+      });
+      console.log("👑 Superadmin creado (admin / admin123)");
+    }
+  } catch (err) {
+    console.error("❌ Error al iniciar la base de datos:", err);
+    process.exit(1);
   }
 };
 
-// 🛡️ Middleware de autenticación JWT
+// 🛡️ Middleware de autenticación
 const authenticate = (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
@@ -98,7 +119,7 @@ const authenticate = (req, res, next) => {
 app.post("/api/login", async (req, res) => {
   try {
     const { username, password } = req.body;
-    const user = await db.get("SELECT * FROM users WHERE username = ?", [username]);
+    const user = await User.findOne({ where: { username } });
     if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
 
     const valid = await bcrypt.compare(password, user.password);
@@ -120,78 +141,72 @@ app.post("/api/login", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("❌ Error en login:", err);
-    res.status(500).json({ error: "Error en el servidor" });
+    res.status(500).json({ error: "Error en login" });
   }
 });
 
-// 👥 CRUD de usuarios (solo superadmin)
+// 👥 CRUD de usuarios
 app.get("/api/users", authenticate, async (req, res) => {
-  if (req.user.role !== "superadmin") return res.status(403).json({ error: "Acceso denegado" });
-  const users = await db.all("SELECT id, username, role, name, created_at FROM users");
+  if (req.user.role !== "superadmin")
+    return res.status(403).json({ error: "Acceso denegado" });
+  const users = await User.findAll({
+    attributes: ["id", "username", "role", "name", "createdAt"],
+  });
   res.json(users);
 });
 
 app.post("/api/users", authenticate, async (req, res) => {
-  if (req.user.role !== "superadmin") return res.status(403).json({ error: "Acceso denegado" });
+  if (req.user.role !== "superadmin")
+    return res.status(403).json({ error: "Acceso denegado" });
   const { username, password, role, name } = req.body;
   const hashed = await bcrypt.hash(password, 10);
-  await db.run(
-    "INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)",
-    [username, hashed, role, name]
-  );
+  await User.create({ username, password: hashed, role, name });
   res.json({ message: "Usuario creado correctamente" });
 });
 
 app.put("/api/users/:id", authenticate, async (req, res) => {
-  if (req.user.role !== "superadmin") return res.status(403).json({ error: "Acceso denegado" });
-  const { username, password, role, name } = req.body;
+  if (req.user.role !== "superadmin")
+    return res.status(403).json({ error: "Acceso denegado" });
   const { id } = req.params;
+  const { username, password, role, name } = req.body;
 
-  if (password) {
-    const hashed = await bcrypt.hash(password, 10);
-    await db.run(
-      "UPDATE users SET username = ?, password = ?, role = ?, name = ? WHERE id = ?",
-      [username, hashed, role, name, id]
-    );
-  } else {
-    await db.run(
-      "UPDATE users SET username = ?, role = ?, name = ? WHERE id = ?",
-      [username, role, name, id]
-    );
-  }
+  const updateData = { username, role, name };
+  if (password) updateData.password = await bcrypt.hash(password, 10);
+
+  await User.update(updateData, { where: { id } });
   res.json({ message: "Usuario actualizado correctamente" });
 });
 
 app.delete("/api/users/:id", authenticate, async (req, res) => {
-  if (req.user.role !== "superadmin") return res.status(403).json({ error: "Acceso denegado" });
+  if (req.user.role !== "superadmin")
+    return res.status(403).json({ error: "Acceso denegado" });
   const { id } = req.params;
-  await db.run("DELETE FROM users WHERE id = ?", [id]);
+  await User.destroy({ where: { id } });
   res.json({ message: "Usuario eliminado correctamente" });
 });
 
-
 // 👥 CRUD de empleados
 app.get("/api/employees", authenticate, async (req, res) => {
-  try {
-    const employees = await db.all("SELECT * FROM employees WHERE is_active = 1");
-    res.json(employees);
-  } catch (err) {
-    res.status(500).json({ error: "Error obteniendo empleados" });
-  }
+  const employees = await Employee.findAll({ where: { is_active: true } });
+  res.json(employees);
 });
 
 app.post("/api/employees", authenticate, async (req, res) => {
   try {
-    const { dni, first_name, last_name, employee_type, salario_mensual } = req.body;
+    const { dni, first_name, last_name, employee_type, salario_mensual } =
+      req.body;
     const qr_code = `${dni}-${Date.now()}`;
     const qr_image = await QRCode.toDataURL(qr_code);
 
-    await db.run(
-      `INSERT INTO employees (dni, first_name, last_name, employee_type, salario_mensual, qr_code, qr_image)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [dni, first_name, last_name, employee_type, salario_mensual, qr_code, qr_image]
-    );
+    await Employee.create({
+      dni,
+      first_name,
+      last_name,
+      employee_type,
+      salario_mensual,
+      qr_code,
+      qr_image,
+    });
 
     res.json({ message: "Empleado registrado correctamente" });
   } catch (err) {
@@ -202,66 +217,51 @@ app.post("/api/employees", authenticate, async (req, res) => {
 
 // 📅 Registros de asistencia
 app.get("/api/attendance", authenticate, async (req, res) => {
-  try {
-    const records = await db.all(`
-      SELECT a.*, e.first_name, e.last_name
-      FROM attendance a
-      JOIN employees e ON a.employee_id = e.id
-      ORDER BY a.created_at DESC
-    `);
-    res.json(records);
-  } catch (err) {
-    console.error("❌ Error obteniendo registros:", err);
-    res.status(500).json({ error: "Error obteniendo registros" });
-  }
+  const records = await Attendance.findAll({
+    include: [{ model: Employee, attributes: ["first_name", "last_name"] }],
+    order: [["createdAt", "DESC"]],
+  });
+  res.json(records);
 });
 
-// 📊 Estadísticas para el dashboard
+// 📊 Estadísticas del dashboard
 app.get("/api/dashboard/stats", authenticate, async (req, res) => {
-  try {
-    const totalEmployees = await db.get("SELECT COUNT(*) as count FROM employees WHERE is_active = 1");
-    const totalRecords = await db.get("SELECT COUNT(*) as count FROM attendance");
-    const todayRecords = await db.get(
-      "SELECT COUNT(*) as count FROM attendance WHERE record_date = date('now')"
-    );
+  const totalEmployees = await Employee.count({ where: { is_active: true } });
+  const totalRecords = await Attendance.count();
+  const todayRecords = await Attendance.count({
+    where: sequelize.where(
+      sequelize.fn("DATE", sequelize.col("record_date")),
+      "=",
+      sequelize.literal("CURRENT_DATE")
+    ),
+  });
 
-    res.json({
-      totalEmployees: totalEmployees.count,
-      totalRecords: totalRecords.count,
-      todayRecords: todayRecords.count,
-    });
-  } catch (err) {
-    console.error("❌ Error en estadísticas:", err);
-    res.status(500).json({ error: "Error obteniendo estadísticas" });
-  }
+  res.json({
+    totalEmployees,
+    totalRecords,
+    todayRecords,
+  });
 });
 
-// ✅ Verificar validez del token
+// ✅ Verificar token
 app.get("/api/verify-token", async (req, res) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
-
-  if (!token) {
-    return res.json({ valid: false });
-  }
+  if (!token) return res.json({ valid: false });
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    // Opcional: verificar que el usuario aún exista
-    const user = await db.get("SELECT id, username, role, name FROM users WHERE id = ?", [decoded.id]);
+    const user = await User.findByPk(decoded.id, {
+      attributes: ["id", "username", "role", "name"],
+    });
     if (!user) return res.json({ valid: false });
-
     res.json({ valid: true, user });
-  } catch (error) {
+  } catch {
     res.json({ valid: false });
   }
 });
 
-//nuevos inicios del proyecto para el backend
-
 // 🚀 Iniciar servidor
-initDB()
-  .then(() => {
-    app.listen(PORT, () => console.log(`✅ Servidor en puerto ${PORT}`));
-  })
-  .catch((err) => console.error("❌ Error al iniciar la base de datos:", err));
+initDB().then(() =>
+  app.listen(PORT, () => console.log(`✅ Servidor en puerto ${PORT}`))
+);
