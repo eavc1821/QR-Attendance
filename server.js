@@ -26,29 +26,26 @@ const allowedOrigins = [
   "https://gjd78.com",       // tu dominio en producción
 ];
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // Permitir sin origen (por ejemplo, curl o Postman)
-      if (!origin) return callback(null, true);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+  }
 
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      } else {
-        return callback(new Error("CORS bloqueado: dominio no permitido"));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "Origin",
-      "X-Requested-With",
-      "Accept",
-    ],
-  })
-);
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header(
+    "Access-Control-Allow-Headers",
+    "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+  );
+  res.header("Access-Control-Allow-Credentials", "true");
+
+  // Manejar preflight (OPTIONS)
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+
+  next();
+});
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
