@@ -104,7 +104,7 @@ const initDB = async () => {
     await sequelize.authenticate();
     console.log("✅ Conectado a PostgreSQL");
 
-    await sequelize.sync({ alter: true });
+    await sequelize.sync();
     console.log("🧩 Tablas sincronizadas correctamente");
 
     await sequelize.query('CREATE INDEX IF NOT EXISTS idx_employees_dni ON "Employees" (dni);');
