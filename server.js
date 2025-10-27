@@ -19,7 +19,37 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // ✅ Middlewares
-app.use(cors());
+import cors from "cors";
+
+const allowedOrigins = [
+  "http://localhost:5173",   // entorno local (vite)
+  "https://gjd78.com",       // tu dominio en producción
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Permitir sin origen (por ejemplo, curl o Postman)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      } else {
+        return callback(new Error("CORS bloqueado: dominio no permitido"));
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Origin",
+      "X-Requested-With",
+      "Accept",
+    ],
+  })
+);
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 app.use(compression());
